@@ -1,12 +1,6 @@
 construction:
   chunk_size: 1000
   datasets_no_chunk:
-  - hotpot
-  - 2wiki
-  - musique
-  - graphrag-bench
-  - annoy_chs
-  - annoy_eng
   - demo
   max_workers: 32
   mode: agent  # set noagent to speed up
@@ -16,43 +10,15 @@ construction:
     enable_fast_mode: true
     struct_weight: 0.3
     max_total_communities: 100
-    
+
+active_dataset: demo
+
 datasets:
-  hotpot:
-    corpus_path: data/hotpotqa/hotpotqa_corpus.json
-    qa_path: data/hotpotqa/hotpotqa.json
-    schema_path: schemas/hotpot.json
-    graph_output: output/graphs/hotpot_new.json
-  2wiki:
-    corpus_path: data/2wiki/2wikimultihopqa_corpus.json
-    qa_path: data/2wiki/2wikimultihopqa.json
-    schema_path: schemas/2wiki.json
-    graph_output: output/graphs/2wiki_new.json
-  musique:
-    corpus_path: data/musique/musique_corpus.json
-    qa_path: data/musique/musique.json
-    schema_path: schemas/musique.json
-    graph_output: output/graphs/musique_new.json
-  graphrag-bench:
-    corpus_path: data/graphrag-bench-reformat/bench_corpus.json
-    qa_path: data/graphrag-bench-reformat/graphrag-bench.json
-    schema_path: schemas/graphrag-bench.json
-    graph_output: output/graphs/graphrag-bench_new.json
   demo:
     corpus_path: data/demo/demo_corpus.json
     qa_path: data/demo/demo.json
     schema_path: schemas/demo.json
     graph_output: output/graphs/demo_new.json
-  anony_chs:
-    corpus_path: data/anony_chs/final_chunk_corpus.json
-    qa_path: data/anony_chs/final_qa_pairs.json
-    schema_path: schemas/anony_chs.json
-    graph_output: output/graphs/anony_chs_new.json
-  anony_eng:
-    corpus_path: data/anony_eng/final_chunk_corpus.json
-    qa_path: data/anony_eng/final_qa_pairs.json
-    schema_path: schemas/anony_eng.json
-    graph_output: output/graphs/anony_eng_new.json
 
 embeddings:
   batch_size: 32
@@ -61,7 +27,7 @@ embeddings:
   model_name: all-MiniLM-L6-v2
 
 nlp:
-  spacy_model: en_core_web_lg
+  spacy_model: zh_core_web_lg
 
 
 output:
@@ -79,126 +45,82 @@ performance:
 prompts:
   construction:
     # NoAgent mode prompts
-    general: "You are an expert information extractor and structured data organizer.\
-      \ Your task is to analyze the provided text and extract as many valuable entities,\
-      \ their attributes, and relations as possible in a structured JSON format. \
-      \ \n\nGuidelines:\n1. Prioritize the following predefined schema for extraction;\n\
-      \   ```{schema}```\n2. Flexibility: If the context doesn't fit the predefined\
-      \ schema, extract the valuable knowledge as needed;\n3. Conciseness: The Attributes\
-      \ and Triples you extract should be complementary and no semantic redundancy.\n\
-      4. Do NOT miss any useful information in the context;\n5. Output Format: Return\
-      \ only JSON as **Example Output** with:  \n   - Attributes: Map each entity\
-      \ to its descriptive features.  \n   - Triples: List relations between entities\
-      \ in `[entity_mention1, relation, entity_mention2]` format.\n   - Entity_types:\
-      \ Map each entity to its schema type based on the provided schema.\n\n```{chunk}```\n\
-      \nExample Output:  \n{{\n  \"attributes\": {{\n    \"Stephen King\": [\"profession:\
-      \ author\"]\n  }},\n  \"triples\": [\n    [\"Shawshank Redemption\", \"based\
-      \ on\", \"Rita Hayworth and Shawshank Redemption\"],\n    [\"Shawshank Redemption\"\
-      , \"directed by\", \"Frank Darabont\"]\n  ],\n  \"entity_types\": {{\n    \"\
-      Stephen King\": \"person\",\n    \"Shawshank Redemption\": \"creative_work\"\
-      ,\n    \"Rita Hayworth and Shawshank Redemption\": \"creative_work\",\n    \"\
-      Frank Darabont\": \"person\"\n  }}\n}}\n"
-    # Agent mode prompts (with schema evolution)
-    general_agent: "You are an expert information extractor and structured data organizer.\
-      \ Your task is to analyze the provided text and extract as many valuable entities,\
-      \ their attributes, and relations as possible in a structured JSON format. \
-      \ \n\nGuidelines:\n1. Prioritize the following predefined schema for extraction;\n\
-      \   ```{schema}```\n2. Flexibility: If the context doesn't fit the predefined\
-      \ schema, extract the valuable knowledge as needed;\n3. Conciseness: The Attributes\
-      \ and Triples you extract should be complementary and no semantic redundancy.\n\
-      4. Do NOT miss any useful information in the context;\n5. Output Format: Return\
-      \ only JSON as **Example Output** with:  \n   - Attributes: Map each entity\
-      \ to its descriptive features.  \n   - Triples: List relations between entities\
-      \ in `[entity_mention1, relation, entity_mention2]` format.\n   - Entity_types:\
-      \ Map each entity to its schema type based on the provided schema.\n\n\
-      Schema Evolution: If you find new and important entity types, relation types,\
-      \ or attribute types that are valuable for knowledge extraction, include them\
-      \ in a \"new_schema_types\" field. Notably, the strict threshold of adding\
-      \ new schema considering both importance and similarity to the pattern in the\
-      \ existing schema is 0.9.\n\n```{chunk}```\n\nExample Output:  \n{{\n  \"attributes\"\
-      : {{\n    \"Stephen King\": [\"profession: author\"]\n  }},\n  \"triples\"\
-      : [\n    [\"Shawshank Redemption\", \"based on\", \"Rita Hayworth and Shawshank\
-      \ Redemption\"],\n    [\"Shawshank Redemption\", \"directed by\", \"Frank Darabont\"\
-      ]\n  ],\n  \"entity_types\": {{\n    \"Stephen King\": \"person\",\n    \"\
-      Shawshank Redemption\": \"creative_work\",\n    \"Rita Hayworth and Shawshank\
-      \ Redemption\": \"creative_work\",\n    \"Frank Darabont\": \"person\"\n  }},\n\
-      \  \"new_schema_types\": {{\n      \"nodes\": [\"Movie\"],\n      \"relations\"\
-      : [\"starring\"],\n      \"attributes\": [\"genre\"]\n  }}\n}}\n"
-    novel: "你是小说信息提取专家，请根据小说内容，参考以下schema，提取小说中的主要人物、人物关系、人物属性、人物事件等关键信息，并严格按照示例返回一个JSON格式。\n\
-      \n小说内容:\n```{chunk}```\n\n参考schema:\n```{schema}```\n\n要求：\n1. 主要人物：包括主角、配角、反派等。\n\
-      2. 人物关系：包括人物之间的互动、关系等。\n3. 人物属性：包括人物的职位、称号、绰号、性别、年龄、职业、性格、特长等。\n4. 主要事件：包括策略、行动、故事背景、历史事件等。\n\
-      5. 事件属性：包括事件的地点、时间、事件的参与者、事件的后果等。\n6. 实体地点等名称严格使用文本中的名称，不要自己推理和创造。\n7. 根据提供的schema为每个实体分配正确的类型。\n注意：\n严格抽取triple三元组为[实体,关系,实体]，不要多余元素。\n\
-      \n示例输出，包括属性、三元组及实体类型：\n{{\n    \"attributes\": {{\n      \"PERSON#1\": [\"绰号: 智多星\"\
-      , \"职位: 智囊团\", \"特长: 策划\"]\n    }},\n    \"triples\": [\n      [\"PERSON#1\"\
-      , \"策划\", \"智取生辰纲\"],\n      [\"智取生辰纲\", \"发生地\", \"LOCATION#1\"]\n    ],\n    \"entity_types\": {{\n      \"PERSON#1\": \"person\",\n      \"智取生辰纲\": \"event\",\n      \"LOCATION#1\": \"location\"\n    }}\n}}\n"
-    novel_agent: "你是小说信息提取专家，请根据小说内容，参考以下schema，提取小说中的主要人物、人物关系、人物属性、人物事件等关键信息，并严格按照示例返回一个JSON格式。\n\
-      \n小说内容:\n```{chunk}```\n\n参考schema:\n```{schema}```\n\n要求：\n1. 主要人物：包括主角、配角、反派等。\n\
-      2. 人物关系：包括人物之间的互动、关系等。\n3. 人物属性：包括人物的职位、称号、绰号、性别、年龄、职业、性格、特长等。\n4. 主要事件：包括策略、行动、故事背景、历史事件等。\n\
-      5. 事件属性：包括事件的地点、时间、事件的参与者、事件的后果等。\n6. 实体地点等名称严格使用文本中的名称，不要自己推理和创造。\n7. 根据提供的schema为每个实体分配正确的类型。\n注意：\n严格抽取triple三元组为[实体,关系,实体]，不要多余元素。\n\
-      \n模式演化：如果你发现新的重要实体类型、关系类型或属性类型对知识提取有价值，请将它们包含在\"new_schema_types\"字段中。注意，添加新模式的严格阈值是0.9，需要考虑重要性和与现有模式的相似性。\n\
-      \n示例输出，包括属性、三元组、实体类型及新模式类型：\n{{\n    \"attributes\": {{\n      \"PERSON#1\": [\"绰号: 智多星\"\
-      , \"职位: 智囊团\", \"特长: 策划\"]\n    }},\n    \"triples\": [\n      [\"PERSON#1\"\
-      , \"策划\", \"智取生辰纲\"],\n      [\"智取生辰纲\", \"发生地\", \"LOCATION#1\"]\n    ],\n    \"entity_types\": {{\n      \"PERSON#1\": \"person\",\n      \"智取生辰纲\": \"event\",\n      \"LOCATION#1\": \"location\"\n    }},\n    \"new_schema_types\": {{\n      \"nodes\": [\"武器\"],\n      \"relations\": [\"使用\"],\n      \"attributes\": [\"材质\"]\n    }}\n}}\n"
-    novel_eng: "You are an expert information extractor and structured data organizer.\
-      \ Your task is to analyze the provided text and extract as many valuable entities,\
-      \ their attributes, and relations as possible in a structured JSON format. \
-      \ \n\nGuidelines:\n1. Prioritize the following predefined schema for extraction;\n\
-      \   ```{schema}```\n2. Flexibility: If the context doesn't fit the predefined\
-      \ schema, extract the valuable knowledge as needed;\n3. Conciseness: The Attributes\
-      \ and Triples you extract should be complementary and no semantic redundancy.\n\
-      4. Do NOT miss any useful information in the context;\n5. Output Format: Return\
-      \ only JSON as **Example Output** with:  \n   - Attributes: Map each entity\
-      \ to its descriptive features.  \n   - Triples: List relations between entities\
-      \ in `[entity_mention1, relation, entity_mention2]` format.\n   - Entity_types:\
-      \ Map each entity to its schema type based on the provided schema.\n\nChunk:\n\
-      ```{chunk}```\n\nExample Output:  \n{{\n  \"attributes\": {{\n    \"PERSON#1\"\
-      : [\"profession: writer\"]\n  }},\n  \"triples\": [\n    [\"PERSON#1\", \"\
-      located at\", \"LOCATION#1\"],\n    [\"PERSON#1\", \"good at\", \"playing piano\"\
-      ]\n  ],\n  \"entity_types\": {{\n    \"PERSON#1\": \"person\",\n    \"LOCATION#1\"\
-      : \"location\"\n  }}\n}}\n"
-    novel_eng_agent: "You are an expert information extractor and structured data organizer.\
-      \ Your task is to analyze the provided text and extract as many valuable entities,\
-      \ their attributes, and relations as possible in a structured JSON format. \
-      \ \n\nGuidelines:\n1. Prioritize the following predefined schema for extraction;\n\
-      \   ```{schema}```\n2. Flexibility: If the context doesn't fit the predefined\
-      \ schema, extract the valuable knowledge as needed;\n3. Conciseness: The Attributes\
-      \ and Triples you extract should be complementary and no semantic redundancy.\n\
-      4. Do NOT miss any useful information in the context;\n5. Output Format: Return\
-      \ only JSON as **Example Output** with:  \n   - Attributes: Map each entity\
-      \ to its descriptive features.  \n   - Triples: List relations between entities\
-      \ in `[entity_mention1, relation, entity_mention2]` format.\n   - Entity_types:\
-      \ Map each entity to its schema type based on the provided schema.\n\n\
-      Schema Evolution: If you find new and important entity types, relation types,\
-      \ or attribute types that are valuable for knowledge extraction, include them\
-      \ in a \"new_schema_types\" field. Notably, the strict threshold of adding\
-      \ new schema considering both importance and similarity to the pattern in the\
-      \ existing schema is 0.9.\n\nChunk:\n```{chunk}```\n\nExample Output:  \n{{\n\
-      \  \"attributes\": {{\n    \"PERSON#1\": [\"profession: writer\"]\n  }},\n\
-      \  \"triples\": [\n    [\"PERSON#1\", \"located at\", \"LOCATION#1\"],\n  \
-      \  [\"PERSON#1\", \"good at\", \"playing piano\"]\n  ],\n  \"entity_types\"\
-      : {{\n    \"PERSON#1\": \"person\",\n    \"LOCATION#1\": \"location\"\n  }},\n\
-      \  \"new_schema_types\": {{\n      \"nodes\": [\"Instrument\"],\n      \"relations\"\
-      : [\"owns\"],\n      \"attributes\": [\"skill_level\"]\n  }}\n}}\n"
+    general:  "你是一个专业的学术文献分析专家。你的任务是从论文元数据中提取实体（Entity）和三元组（Relation）。。\n\n
+      请严格映射实体类型到以下定义中，不得随意创造 Top-level 类型：：\n
+      ```{schema}```\n
+      【提取指南】：\n
+      1. 核心实体：\n
+         - '论文'：必须提取，作为中心节点。\n
+         - '研究主题'/'任务'：从标题和摘要中提取（如“谣言检测”、“实体识别”）。\n
+         - '方法论'/'模型'：提取具体的技术名词（如“Transformer”、“两阶段大模型”）。\n
+         - '数据集'/'评价指标'：如果摘要中明确提到。\n
+      2. 关系构建：\n
+         - (论文) -[提出]-> (模型)\n
+         - (模型) -[解决]-> (挑战痛点)\n
+         - (论文) -[利用]-> (方法论)\n
+         - (模型) -[达到效果]-> (数值+指标)\n
+         - (作者) -[撰写]-> (论文)\n
+      3. 作者与机构：\n
+         - 仅提取前三位作者，防止图谱过于稠密。\n
+         - 机构仅提取一级单位（如“中国地质大学”，而非“...学院”）。\n
+      4. 去噪：不要提取泛泛之词（如“人工智能”、“大数据”、“方法”），只提取具体的专有名词。\n\n
+      【输入内容】：\n```{chunk}```\n\n
+      请以 JSON 格式返回结果，包含 'attributes', 'triples', 'entity_types'。
+      "
+    # Agent mode prompts (with schema evolution)  目前是使用这个
+    general_agent:  "你是一个专业的学术文献分析专家。你的任务是从论文元数据中提取实体（Entity）和三元组（Relation）。。\n\n
+    1. Schema 约束 
+      请严格映射实体类型到以下定义中，不得随意创造 Top-level 类型：\n
+      ```{schema}```\n
+    2. 提取准则
+     - 实体命名：实体名应为具体的专有名词（如 \"Transformer\"），避免使用长句。\n
+     - 关系标准化：必须使用 Schema 中定义的标准谓语。例如：(学者)-[所属机构]->(机构)，(论文)-[发表于]->(期刊会议)。
+     - 属性精简：Attributes 仅记录关键特征。严禁全文复制摘要，描述性属性不得超过 50 字。
+     - 去噪与去冗：仅提取前三位作者和一级单位名称。禁止提取循环关系（即实体1和实体2不能相同）。忽略\"方法\"、\"研究\"等泛泛之词。
+     - 灵活扩展：如果文本中包含非常有价值的知识，但 Schema 中未定义，你可以提取它并在 \"new_schema_types\" 中记录。
+    3.输出格式要求
+    【输入内容】：
+      {chunk}
+    【输出格式】
+      必须且仅返回 JSON 格式数据，包含以下字段：
+      - \"attributes\": 字典格式，Key 为实体名，Value 为属性描述列表。
+      - \"triples\": 列表格式，每个元素为 `[实体1, 关系, 实体2]` 的三元组数组。
+      - \"entity_types\": 字典格式，Key 为实体名，Value 为 Schema 中的 Node 类型。
+      - \"new_schema_types\": (可选) 如果发现了新类型，请记录。
+    【输出示例】：
+    {{
+      \"attributes\": {{
+        \"Attention is All You Need\": [\"标题: Attention is All You Need\", \"年份: 2017\"],
+        \"Transformer\": [\"定义: 基于注意力机制的深度学习模型\"]
+      }},
+      \"triples\": [
+        [\"Ashish Vaswani\", \"撰写\", \"Attention is All You Need\"],
+        [\"Attention is All You Need\", \"提出\", \"Transformer\"],
+        [\"Transformer\", \"应用于\", \"natural language processing\"]
+      ],
+      \"entity_types\": {{
+        \"Ashish Vaswani\": \"作者\",
+        \"Attention is All You Need\": \"论文\",
+        \"Transformer\": \"模型\",
+        \"machine translation\": \"任务\"
+      }},
+      \"new_schema_types\": {{
+          \"nodes\": [],
+          \"relations\": [],
+          \"attributes\": []
+      }}
+    }}
+"
+
   decomposition:
-    general: "You are a professional question decomposition expert specializing in\
-      \ multi-hop reasoning.\nGiven the following ontology and the question, decompose\
-      \ the complex question into 2-3 focused sub-questions and identify involved schema types.\n\nCRITICAL REQUIREMENTS:\n\
-      1. Each sub-question must be:\n   - Specific and focused on a single fact or\
-      \ relationship by identifing all entities, relationships, and reasoning steps\
-      \ needed\n   - Answerable independently with the given ontology\n   - Explicitly\
-      \ reference entities and relations from the original question\n   - Designed\
-      \ to retrieve relevant knowledge for the final answer\n\n2. For simple questions\
-      \ (1-2 hop), return the original question as a single sub-question\n3. Analyze the question and identify all schema types that might be involved\n4. Only return\
-      \ a concise JSON object with sub_questions array and involved_types object.\n\nOntology:\n{ontology}\n\n\
-      Question: {question}\n\nExample for complex question:\nOriginal: \"Which film\
-      \ has the director died earlier, Ethnic Notions or Gordon Of Ghost City?\"\n\
-      Output:\n{{\n  \"sub_questions\": [\n    {{\"sub-question\": \"Who is the director of Ethnic Notions?\"\
-      }},\n    {{\"sub-question\": \"Who is the director of Gordon Of Ghost City?\"\
-      }},\n    {{\"sub-question\": \"When did the director of Ethnic Notions die?\"\
-      }},\n    {{\"sub-question\": \"When did the director of Gordon Of Ghost City\
-      \ die?\"}}\n  ],\n  \"involved_types\": {{\n    \"nodes\": [\"creative_work\", \"person\"],\n    \"relations\": [\"directed_by\"],\n    \"attributes\": [\"name\", \"date\"]\n  }}\n}}\n\nExample for simple question:\nOriginal: \"What is the capital\
-      \ of France?\"\nOutput:\n{{\n  \"sub_questions\": [\n    {{\"sub-question\": \"What is the capital\
-      \ of France?\"}}\n  ],\n  \"involved_types\": {{\n    \"nodes\": [\"location\"],\n    \"relations\": [\"located_in\"],\n    \"attributes\": [\"name\"]\n  }}\n}}\n"
+    general:  "你是一个学术研究助手。你的任务是将复杂的用户问题拆解为多个可以通过图谱检索或文档阅读解决的子问题。\n\n
+      【Schema 参考】：\n{ontology}\n\n
+      【拆解原则】：\n
+      1. **时序拆解**：如果问题涉及发展脉络，按时间段拆解（如“2020年前”、“2020年后”）。\n
+      2. **要素拆解**：如果问题涉及综述，拆解为“使用了什么模型”、“解决了什么问题”、“效果如何”三个维度。\n
+      3. **对比拆解**：如果问题是比较A和B，拆解为“A的特点”、“B的特点”、“A与B的差异”。\n\n
+      【问题】：{question}\n\n
+      请返回 JSON 对象：\n{{\n  \"sub_questions\": [\n    {{\"sub-question\": \"具体子问题1\"}},\n    {{\"sub-question\": \"具体子问题2\"}}\n  ],\n  \"involved_types\": {{\n    \"nodes\": [\"涉及的实体类型\"],\n    \"relations\": [\"涉及的关系\"]\n  }}\n}}"
     novel: "你是一个专业的问题分解大师，请根据以下问题和图本体模式，将问题分解为2-3个子问题，并识别涉及的schema类型。\n   要求：\n   1. 每个子问题必须：\n \
       \     - 明确且专注于一个事实或关系，通过识别所有实体、关系和推理步骤\n      - 明确引用原始问题中的实体和关系\n      - 设计为检索最终答案所需的相关知识\n\
       \   2. 对于简单问题（1-2跳），返回原始问题作为单个子问题\n   3. 分析问题并识别所有可能涉及的schema类型\n   4. 返回一个JSON对象，包含sub_questions数组和involved_types对象。\n   \n   问题：{question}\n\
@@ -208,99 +130,38 @@ prompts:
       \   原始问题：\\\"智取生辰纲事件中，PERSON#1是谁\\\"\n   输出：\n   {{\n       \\\"sub_questions\\\": [\n           {{\\\"sub-question\\\": \\\"\
       智取生辰纲事件中，PERSON#1是谁？\\\"}}\n       ],\n       \\\"involved_types\\\": {{\n           \\\"nodes\\\": [\\\"person\\\", \\\"event\\\"],\n           \\\"relations\\\": [\\\"参与\\\"],\n           \\\"attributes\\\": [\\\"name\\\"]\n       }}\n   }}\n"
   retrieval:
-    general: 'You are an expert knowledge assistant. Your task is to answer the question
-      based on the provided knowledge context.
-
-
-      1. Use ONLY the information from the provided knowledge context and try your
-      best to answer the question.
-
-      2. If the knowledge is insufficient, reject to answer the question.
-
-      3. Be precise and concise in your answer
-
-      4. For factual questions, provide the specific fact or entity name
-
-      5. For temporal questions, provide the specific date, year, or time period
-
-
-      Question: {question}
-
-
-      Knowledge Context:
-
-      {context}
-
-
-      Answer (be specific and direct):
-
-      '
+    general: "你是一个严谨的学术综述撰写者。请根据提供的【检索上下文】回答用户问题。\n\n
+      【检索上下文】：\n{context}\n\n
+      【回答要求】：\n
+      1. **必须引用**：在回答中，每一处关键结论都必须引用上下文中的具体论文（使用Chunk中的【标题】或【作者】作为引用源）。\n
+      2. **结构化**：如果是综述类问题，请使用 markdown 列表或表格形式组织答案。\n
+      3. **区分事实与推断**：明确指出哪些是论文中的原话，哪些是你的总结。\n
+      4. **无中生有**：如果上下文中没有相关信息，请直接说明“现有资料不足以回答”，不要编造。\n\n
+      【用户问题】：{question}\n\n
+      【回答】：\n"
     ircot: 'You are an expert knowledge assistant using iterative retrieval with chain-of-thought
       reasoning.
-
-
       Current Question: {current_query}
-
-
       Available Knowledge Context:
-
       {context}
-
-
       Previous Thoughts: {previous_thoughts}
-
-
       Step {step}: Please think step by step about what additional information you
       need to answer the question completely and accurately.
-
-
       Instructions:
-
       1. Analyze the current knowledge context and the question
-
       2. Think about what information might be missing or unclear
-
       3. If you have enough information to answer, in the end of your response, write
       "So the answer is:" followed by your final answer
-
       4. If you need more information, in the end of your response, write a specific
       query begin with "The new query is:" to retrieve additional relevant information
-
       5. Be specific and focused in your reasoning
-
-
       Your reasoning:
-
       '
-    novel: '你是小说知识助手，你的任务是根据提供的小说知识库回答问题。
-
-      1. 如果知识库中的信息不足以回答问题，请根据你的推理和知识回答。
-
-      2. 回答要简洁明了。
-
-      3. 对于事实性问题，提供具体的事实或人物名称。
-
-      4. 对于时间性问题，提供具体的时间、年份或时间段。
-
-      问题：{question}
-
-      相关知识：{context}
-
-      答案（简洁明了）：
-
-      '
-    novel_eng: "You are a novel knowledge assistant. Your task is to answer the question\
-      \ based on the provided novel knowledge context.\n1. If the knowledge is insufficient,\
-      \ answer the question based on your own knowledge.\n2. Be precise and concise\
-      \ in your answer.\n3. For factual questions, provide the specific fact or entity\
-      \ name\n4. For temporal questions, provide the specific date, year, or time\
-      \ period\n\nQuestion: {question}\n\nKnowledge Context:\n{context}   \n\nAnswer\
-      \ (be specific and direct):\n"
 retrieval:
   agent:
-    enable_ircot: true
-    enable_parallel_subquestions: true
-    max_steps: 5
+    enable_ircot: false
+    enable_parallel_subquestions: false
+    max_steps: 1
   cache_dir: retriever/faiss_cache_new
   enable_caching: true
   enable_high_recall: true

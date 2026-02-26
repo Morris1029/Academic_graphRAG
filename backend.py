@@ -31,6 +31,7 @@ import ast
 # Import document parser
 try:
     from utils.document_parser import get_parser
+
     DOCUMENT_PARSER_AVAILABLE = True
 except ImportError as e:
     DOCUMENT_PARSER_AVAILABLE = False
@@ -41,6 +42,7 @@ try:
     from models.constructor import kt_gen as constructor
     from models.retriever import agentic_decomposer as decomposer, enhanced_kt_retriever as retriever
     from config import get_config, ConfigManager
+
     GRAPHRAG_AVAILABLE = True
     logger.info("✅ GraphRAG components loaded successfully")
 except ImportError as e:
@@ -67,6 +69,7 @@ app.add_middleware(
 active_connections: Dict[str, WebSocket] = {}
 config = None
 
+
 class ConnectionManager:
     def __init__(self):
         self.active_connections: Dict[str, WebSocket] = {}
@@ -87,7 +90,9 @@ class ConnectionManager:
                 logger.error(f"Error sending message to {client_id}: {e}")
                 self.disconnect(client_id)
 
+
 manager = ConnectionManager()
+
 
 # Request/Response models
 class FileUploadResponse(BaseModel):
@@ -96,17 +101,21 @@ class FileUploadResponse(BaseModel):
     dataset_name: Optional[str] = None
     files_count: Optional[int] = None
 
+
 class GraphConstructionRequest(BaseModel):
     dataset_name: str
-    
+
+
 class GraphConstructionResponse(BaseModel):
     success: bool
     message: str
     graph_data: Optional[Dict] = None
 
+
 class QuestionRequest(BaseModel):
     question: str
     dataset_name: str
+
 
 class QuestionResponse(BaseModel):
     answer: str
@@ -115,6 +124,7 @@ class QuestionResponse(BaseModel):
     retrieved_chunks: List[str]
     reasoning_steps: List[Dict]
     visualization_data: Dict
+
 
 def ensure_demo_schema_exists() -> str:
     """Ensure default demo schema exists and return its path."""
@@ -139,6 +149,7 @@ def ensure_demo_schema_exists() -> str:
             json.dump(demo_schema, f, indent=2)
     return schema_path
 
+
 def get_schema_path_for_dataset(dataset_name: str) -> str:
     """Return dataset-specific schema if present; otherwise fallback to demo schema."""
     if dataset_name and dataset_name != "demo":
@@ -146,6 +157,7 @@ def get_schema_path_for_dataset(dataset_name: str) -> str:
         if os.path.exists(ds_schema):
             return ds_schema
     return ensure_demo_schema_exists()
+
 
 async def send_progress_update(client_id: str, stage: str, progress: int, message: str):
     """Send progress update via WebSocket"""
@@ -156,6 +168,7 @@ async def send_progress_update(client_id: str, stage: str, progress: int, messag
         "message": message,
         "timestamp": datetime.now().isoformat()
     }, client_id)
+
 
 # -------- Encoding detection helpers --------
 def _detect_encoding_from_bytes(data: bytes) -> Optional[str]:
@@ -169,6 +182,7 @@ def _detect_encoding_from_bytes(data: bytes) -> Optional[str]:
     except Exception:
         pass
     return None
+
 
 def decode_bytes_with_detection(data: bytes) -> str:
     """Decode bytes to string with encoding detection and robust fallbacks.
@@ -195,6 +209,7 @@ def decode_bytes_with_detection(data: bytes) -> str:
     # Last resort
     return data.decode("utf-8", errors="replace")
 
+
 async def clear_cache_files(dataset_name: str):
     """Clear all cache files for a dataset before graph construction"""
     try:
@@ -203,26 +218,26 @@ async def clear_cache_files(dataset_name: str):
         if os.path.exists(faiss_cache_dir):
             shutil.rmtree(faiss_cache_dir)
             logger.info(f"Cleared FAISS cache directory: {faiss_cache_dir}")
-        
+
         # Clear output chunks
         chunk_file = f"output/chunks/{dataset_name}.txt"
         if os.path.exists(chunk_file):
             os.remove(chunk_file)
             logger.info(f"Cleared chunk file: {chunk_file}")
-        
+
         # Clear output graphs
         graph_file = f"output/graphs/{dataset_name}_new.json"
         if os.path.exists(graph_file):
             os.remove(graph_file)
             logger.info(f"Cleared graph file: {graph_file}")
-        
+
         # Clear any other cache files with dataset name pattern
         cache_patterns = [
             f"output/logs/{dataset_name}_*.log",
             f"output/chunks/{dataset_name}_*",
             f"output/graphs/{dataset_name}_*"
         ]
-        
+
         for pattern in cache_patterns:
             for file_path in glob.glob(pattern):
                 try:
@@ -234,28 +249,50 @@ async def clear_cache_files(dataset_name: str):
                         logger.info(f"Cleared cache directory: {file_path}")
                 except Exception as e:
                     logger.warning(f"Failed to clear {file_path}: {e}")
-        
+
         logger.info(f"Cache cleanup completed for dataset: {dataset_name}")
-        
+
     except Exception as e:
         logger.error(f"Error clearing cache files for {dataset_name}: {e}")
         # Don't raise exception, just log the error
 
+
 # Serve frontend HTML
+
+# @app.get("/")
+# async def read_root():
+#     frontend_path = "frontend/index.html"
+#     if os.path.exists(frontend_path):
+#         return FileResponse(frontend_path)
+#     return {"message": "Youtu-GraphRAG Unified Interface is running!", "status": "ok"}
+
 @app.get("/")
 async def read_root():
-    frontend_path = "frontend/index.html"
+    # 1. 确保这里指向你新拆分出的 index_new.html
+    frontend_path = "frontend/index_new.html"
     if os.path.exists(frontend_path):
         return FileResponse(frontend_path)
     return {"message": "Youtu-GraphRAG Unified Interface is running!", "status": "ok"}
 
+
+@app.get("/style.css")
+async def read_css():
+    return FileResponse("frontend/style.css")
+
+
+@app.get("/script.js")
+async def read_js():
+    return FileResponse("frontend/script.js")
+
+
 @app.get("/api/status")
 async def get_status():
     return {
-        "message": "Youtu-GraphRAG Unified Interface is running!", 
+        "message": "Youtu-GraphRAG Unified Interface is running!",
         "status": "ok",
         "graphrag_available": GRAPHRAG_AVAILABLE
     }
+
 
 @app.websocket("/ws/{client_id}")
 async def websocket_endpoint(websocket: WebSocket, client_id: str):
@@ -265,6 +302,7 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
             data = await websocket.receive_text()
     except WebSocketDisconnect:
         manager.disconnect(client_id)
+
 
 @app.post("/api/upload", response_model=FileUploadResponse)
 async def upload_files(files: List[UploadFile] = File(...), client_id: str = "default"):
@@ -283,36 +321,36 @@ async def upload_files(files: List[UploadFile] = File(...), client_id: str = "de
             from datetime import datetime
             date_str = datetime.now().strftime("%Y%m%d")
             dataset_name = f"{len(files)}files_{date_str}"
-        
+
         # Add counter if dataset already exists
         base_name = dataset_name
         counter = 1
         while os.path.exists(f"data/uploaded/{dataset_name}"):
             dataset_name = f"{base_name}_{counter}"
             counter += 1
-            
+
         upload_dir = f"data/uploaded/{dataset_name}"
         os.makedirs(upload_dir, exist_ok=True)
-        
+
         await send_progress_update(client_id, "upload", 10, "Starting file upload...")
-        
+
         # Process uploaded files
         corpus_data = []
         skipped_files: List[str] = []
         processed_count = 0
         allowed_extensions = {".txt", ".md", ".json", ".pdf", ".docx", ".doc"}
-        
+
         # Initialize document parser if needed
         doc_parser = None
         if DOCUMENT_PARSER_AVAILABLE:
             doc_parser = get_parser()
-        
+
         for i, file in enumerate(files):
             file_path = os.path.join(upload_dir, file.filename)
             with open(file_path, "wb") as buffer:
                 content_bytes = await file.read()
                 buffer.write(content_bytes)
-            
+
             # Process file content using encoding detection
             filename_lower = (file.filename or "").lower()
             ext = os.path.splitext(filename_lower)[1]
@@ -323,16 +361,17 @@ async def upload_files(files: List[UploadFile] = File(...), client_id: str = "de
                 progress = 10 + (i + 1) * 80 // len(files)
                 await send_progress_update(client_id, "upload", progress, f"Skipped unsupported file: {file.filename}")
                 continue
-            
+
             # Handle PDF and DOCX/DOC files with document parser
             if ext in ['.pdf', '.docx', '.doc']:
                 if not doc_parser:
                     logger.warning(f"Document parser not available, skipping {file.filename}")
                     skipped_files.append(file.filename)
                     progress = 10 + (i + 1) * 80 // len(files)
-                    await send_progress_update(client_id, "upload", progress, f"Skipped {file.filename} (parser unavailable)")
+                    await send_progress_update(client_id, "upload", progress,
+                                               f"Skipped {file.filename} (parser unavailable)")
                     continue
-                
+
                 try:
                     text = doc_parser.parse_file(file_path, ext)
                     if text and text.strip():
@@ -341,17 +380,20 @@ async def upload_files(files: List[UploadFile] = File(...), client_id: str = "de
                             "text": text
                         })
                         processed_count += 1
-                        await send_progress_update(client_id, "upload", 10 + (i + 1) * 80 // len(files), f"Parsed {file.filename}")
+                        await send_progress_update(client_id, "upload", 10 + (i + 1) * 80 // len(files),
+                                                   f"Parsed {file.filename}")
                     else:
                         logger.warning(f"No text extracted from {file.filename}")
                         skipped_files.append(file.filename)
-                        await send_progress_update(client_id, "upload", 10 + (i + 1) * 80 // len(files), f"No text in {file.filename}")
+                        await send_progress_update(client_id, "upload", 10 + (i + 1) * 80 // len(files),
+                                                   f"No text in {file.filename}")
                 except Exception as e:
                     logger.error(f"Error parsing {file.filename}: {e}")
                     skipped_files.append(file.filename)
-                    await send_progress_update(client_id, "upload", 10 + (i + 1) * 80 // len(files), f"Failed to parse {file.filename}")
+                    await send_progress_update(client_id, "upload", 10 + (i + 1) * 80 // len(files),
+                                               f"Failed to parse {file.filename}")
                 continue
-            
+
             # Treat plain text formats explicitly (.txt and .md)
             if filename_lower.endswith(('.txt', '.md')):
                 text = decode_bytes_with_detection(content_bytes)
@@ -366,20 +408,23 @@ async def upload_files(files: List[UploadFile] = File(...), client_id: str = "de
                     data_obj = json.loads(json_text)
                     if isinstance(data_obj, list):
                         corpus_data.extend(data_obj)
-                    else:
+                    elif isinstance(data_obj, dict):
                         corpus_data.append(data_obj)
+                    else:
+                        logger.warning(f"JSON file {file.filename} content is neither list nor dict")
                     processed_count += 1
-                except Exception:
+                except Exception as e:
+                    logger.warning(f"Failed to parse JSON {file.filename}: {e}. Treating as text.")
                     # If JSON parsing fails, treat as text
                     text = decode_bytes_with_detection(content_bytes)
                     corpus_data.append({
                         "title": file.filename,
                         "text": text
                     })
-            
+
             progress = 10 + (i + 1) * 80 // len(files)
             await send_progress_update(client_id, "upload", progress, f"Processed {file.filename}")
-        
+
         # Ensure at least one valid file processed
         if processed_count == 0:
             msg = "No supported files were uploaded. Allowed: .txt, .md, .json, .pdf, .docx, .doc"
@@ -387,17 +432,17 @@ async def upload_files(files: List[UploadFile] = File(...), client_id: str = "de
                 msg += f"; skipped: {', '.join(skipped_files)}"
             await send_progress_update(client_id, "upload", 0, msg)
             raise HTTPException(status_code=400, detail=msg)
-        
+
         # Save corpus data
         corpus_path = f"{upload_dir}/corpus.json"
         with open(corpus_path, 'w', encoding='utf-8') as f:
             json.dump(corpus_data, f, ensure_ascii=False, indent=2)
-        
+
         # Create dataset configuration
         await create_dataset_config()
-        
+
         await send_progress_update(client_id, "upload", 100, "Upload completed successfully!")
-        
+
         msg_ok = "Files uploaded successfully"
         if skipped_files:
             msg_ok += f"; skipped unsupported: {', '.join(skipped_files)}"
@@ -407,50 +452,57 @@ async def upload_files(files: List[UploadFile] = File(...), client_id: str = "de
             dataset_name=dataset_name,
             files_count=processed_count
         )
-    
+
     except Exception as e:
         await send_progress_update(client_id, "upload", 0, f"Upload failed: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
 
 async def create_dataset_config():
     """Create dataset configuration"""
     # Ensure default demo schema exists
     ensure_demo_schema_exists()
 
+
 @app.post("/api/construct-graph", response_model=GraphConstructionResponse)
 async def construct_graph(request: GraphConstructionRequest, client_id: str = "default"):
     """Construct knowledge graph from uploaded data"""
     try:
         if not GRAPHRAG_AVAILABLE:
-            raise HTTPException(status_code=503, detail="GraphRAG components not available. Please install or configure them.")
+            raise HTTPException(status_code=503,
+                                detail="GraphRAG components not available. Please install or configure them.")
         dataset_name = request.dataset_name
-        
+
         await send_progress_update(client_id, "construction", 2, "Cleaning old cache files...")
-        
+
         # Clear all cache files before construction
         await clear_cache_files(dataset_name)
-        
+
         await send_progress_update(client_id, "construction", 5, "Initializing graph builder...")
-        
+
         # Get dataset paths
-        corpus_path = f"data/uploaded/{dataset_name}/corpus.json" 
+        corpus_path = f"data/uploaded/{dataset_name}/corpus.json"
         # Choose schema: dataset-specific or default demo
         schema_path = get_schema_path_for_dataset(dataset_name)
-        
+
         if not os.path.exists(corpus_path):
             # Try demo dataset
             corpus_path = "data/demo/demo_corpus.json"
-        
+
         if not os.path.exists(corpus_path):
             raise HTTPException(status_code=404, detail="Dataset not found")
-        
+
         await send_progress_update(client_id, "construction", 10, "Loading configuration and corpus...")
-        
+
         # Initialize config
         global config
         if config is None:
             config = get_config("config/base_config.yaml")
-        
+
+        # 【关键修复】确保 LLM API Key 存在，否则这里就会抛出 500
+        if not os.getenv("LLM_API_KEY") and not config.api.llm_api_key:
+            raise HTTPException(status_code=500, detail="LLM API Key not found in environment variables.")
+
         # Initialize KTBuilder
         builder = constructor.KTBuilder(
             dataset_name,
@@ -458,24 +510,24 @@ async def construct_graph(request: GraphConstructionRequest, client_id: str = "d
             mode=config.construction.mode,
             config=config
         )
-        
+
         await send_progress_update(client_id, "construction", 20, "Starting entity-relation extraction...")
-        
+
         # Build knowledge graph
         def build_graph_sync():
             return builder.build_knowledge_graph(corpus_path)
-        
+
         # Run in executor to avoid blocking
         loop = asyncio.get_event_loop()
-        
+
         # Run graph construction without simulated progress updates
         knowledge_graph = await loop.run_in_executor(None, build_graph_sync)
-        
+
         await send_progress_update(client_id, "construction", 95, "Preparing visualization data...")
         # Load constructed graph for visualization
         graph_path = f"output/graphs/{dataset_name}_new.json"
         graph_vis_data = await prepare_graph_visualization(graph_path)
-        
+
         await send_progress_update(client_id, "construction", 100, "Graph construction completed!")
         # Notify completion via WebSocket
         try:
@@ -487,13 +539,13 @@ async def construct_graph(request: GraphConstructionRequest, client_id: str = "d
             }, client_id)
         except Exception as _e:
             logger.warning(f"Failed to send completion message: {_e}")
-        
+
         return GraphConstructionResponse(
             success=True,
             message="Knowledge graph constructed successfully",
             graph_data=graph_vis_data
         )
-    
+
     except Exception as e:
         await send_progress_update(client_id, "construction", 0, f"Construction failed: {str(e)}")
         try:
@@ -516,7 +568,7 @@ async def prepare_graph_visualization(graph_path: str) -> Dict:
                 graph_data = json.load(f)
         else:
             return {"nodes": [], "links": [], "categories": [], "stats": {}}
-        
+
         # Handle different graph data formats
         if isinstance(graph_data, list):
             # GraphRAG format: list of relationships
@@ -526,25 +578,26 @@ async def prepare_graph_visualization(graph_path: str) -> Dict:
             return convert_standard_format(graph_data)
         else:
             return {"nodes": [], "links": [], "categories": [], "stats": {}}
-    
+
     except Exception as e:
         logger.error(f"Error preparing visualization: {e}")
         return {"nodes": [], "links": [], "categories": [], "stats": {}}
+
 
 def convert_graphrag_format(graph_data: List) -> Dict:
     """Convert GraphRAG relationship list to ECharts format"""
     nodes_dict = {}
     links = []
-    
+
     # Extract nodes and relationships from the list
     for item in graph_data:
         if not isinstance(item, dict):
             continue
-            
+
         start_node = item.get("start_node", {})
         end_node = item.get("end_node", {})
         relation = item.get("relation", "related_to")
-        
+
         # Process start node
         start_id = ""
         end_id = ""
@@ -558,7 +611,7 @@ def convert_graphrag_format(graph_data: List) -> Dict:
                     "symbolSize": 25,
                     "properties": start_node.get("properties", {})
                 }
-        
+
         # Process end node
         if end_node:
             end_id = end_node.get("properties", {}).get("name", "")
@@ -570,7 +623,7 @@ def convert_graphrag_format(graph_data: List) -> Dict:
                     "symbolSize": 25,
                     "properties": end_node.get("properties", {})
                 }
-        
+
         # Add relationship
         if start_id and end_id:
             links.append({
@@ -579,12 +632,12 @@ def convert_graphrag_format(graph_data: List) -> Dict:
                 "name": relation,
                 "value": 1
             })
-    
+
     # Create categories
     categories_set = set()
     for node in nodes_dict.values():
         categories_set.add(node["category"])
-    
+
     categories = []
     for i, cat_name in enumerate(categories_set):
         categories.append({
@@ -593,11 +646,11 @@ def convert_graphrag_format(graph_data: List) -> Dict:
                 "color": f"hsl({i * 360 / len(categories_set)}, 70%, 60%)"
             }
         })
-    
+
     nodes = list(nodes_dict.values())
-    
+
     return {
-        "nodes": nodes[:500],  # Limit for better visual effects​​
+        "nodes": nodes[:500],  # Limit for better visual effects
         "links": links[:1000],
         "categories": categories,
         "stats": {
@@ -608,18 +661,19 @@ def convert_graphrag_format(graph_data: List) -> Dict:
         }
     }
 
+
 def convert_standard_format(graph_data: Dict) -> Dict:
     """Convert standard {nodes: [], edges: []} format to ECharts format"""
     nodes = []
     links = []
     categories = []
-    
+
     # Extract unique categories
     node_types = set()
     for node in graph_data.get("nodes", []):
         node_type = node.get("type", "entity")
         node_types.add(node_type)
-    
+
     for i, node_type in enumerate(node_types):
         categories.append({
             "name": node_type,
@@ -627,7 +681,7 @@ def convert_standard_format(graph_data: Dict) -> Dict:
                 "color": f"hsl({i * 360 / len(node_types)}, 70%, 60%)"
             }
         })
-    
+
     # Process nodes
     for node in graph_data.get("nodes", []):
         nodes.append({
@@ -638,7 +692,7 @@ def convert_standard_format(graph_data: Dict) -> Dict:
             "symbolSize": min(max(len(node.get("attributes", [])) * 3 + 15, 15), 40),
             "attributes": node.get("attributes", [])
         })
-    
+
     # Process edges
     for edge in graph_data.get("edges", []):
         links.append({
@@ -647,7 +701,7 @@ def convert_standard_format(graph_data: Dict) -> Dict:
             "name": edge.get("relation", "related_to"),
             "value": edge.get("weight", 1)
         })
-    
+
     return {
         "nodes": nodes[:500],  # Limit for performance
         "links": links[:1000],
@@ -660,12 +714,14 @@ def convert_standard_format(graph_data: Dict) -> Dict:
         }
     }
 
+
 @app.post("/api/ask-question", response_model=QuestionResponse)
 async def ask_question(request: QuestionRequest, client_id: str = "default"):
     """Process question using agent mode (iterative retrieval + reasoning) and return answer."""
     try:
         if not GRAPHRAG_AVAILABLE:
-            raise HTTPException(status_code=503, detail="GraphRAG components not available. Please install or configure them.")
+            raise HTTPException(status_code=503,
+                                detail="GraphRAG components not available. Please install or configure them.")
         dataset_name = request.dataset_name
         question = request.question
 
@@ -716,6 +772,7 @@ async def ask_question(request: QuestionRequest, client_id: str = "default"):
         # Helper functions (reuse a simplified version of main.py logic)
         def _dedup(items):
             return list({x: None for x in items}.keys())
+
         def _merge_chunk_contents(ids, mapping):
             return [mapping.get(i, f"[Missing content for chunk {i}]") for i in ids]
 
@@ -755,6 +812,7 @@ async def ask_question(request: QuestionRequest, client_id: str = "default"):
         for idx, sq in enumerate(sub_questions):
             sq_text = sq.get("sub-question", question)
             start_t = _time.time()
+
             # Offload retrieval to thread executor to avoid blocking event loop
             def _run_retrieval():
                 return kt_retriever.process_retrieval_results(
@@ -762,6 +820,7 @@ async def ask_question(request: QuestionRequest, client_id: str = "default"):
                     top_k=config.retrieval.top_k_filter,
                     involved_types=involved_types
                 )
+
             retrieval_results, elapsed = await loop.run_in_executor(None, _run_retrieval)
             triples = retrieval_results.get('triples', []) or []
             chunk_ids = retrieval_results.get('chunk_ids', []) or []
@@ -802,7 +861,7 @@ async def ask_question(request: QuestionRequest, client_id: str = "default"):
                 # yield to event loop to flush WS frames
                 await asyncio.sleep(0)
             except Exception as _e:
-                logger.debug(f"QA update ws send failed for sub_question {idx+1}: {_e}")
+                logger.debug(f"QA update ws send failed for sub_question {idx + 1}: {_e}")
 
         # Step 3: IRCoT iterative refinement
         await send_progress_update(client_id, "retrieval", 75, "Iterative reasoning...")
@@ -824,7 +883,8 @@ async def ask_question(request: QuestionRequest, client_id: str = "default"):
         initial_triples = _dedup(list(all_triples))
         initial_chunk_ids = list(set(all_chunk_ids))
         initial_chunk_contents = _merge_chunk_contents(initial_chunk_ids, all_chunk_contents)
-        context_initial = "=== Triples ===\n" + "\n".join(initial_triples[:20]) + "\n=== Chunks ===\n" + "\n".join(initial_chunk_contents[:10])
+        context_initial = "=== Triples ===\n" + "\n".join(initial_triples[:20]) + "\n=== Chunks ===\n" + "\n".join(
+            initial_chunk_contents[:10])
         init_prompt = kt_retriever.generate_prompt(question, context_initial)
         try:
             # Offload LLM call to thread executor
@@ -838,7 +898,8 @@ async def ask_question(request: QuestionRequest, client_id: str = "default"):
             loop_triples = _dedup(list(all_triples))
             loop_chunk_ids = list(set(all_chunk_ids))
             loop_chunk_contents = _merge_chunk_contents(loop_chunk_ids, all_chunk_contents)
-            loop_ctx = "=== Triples ===\n" + "\n".join(loop_triples[:20]) + "\n=== Chunks ===\n" + "\n".join(loop_chunk_contents[:10])
+            loop_ctx = "=== Triples ===\n" + "\n".join(loop_triples[:20]) + "\n=== Chunks ===\n" + "\n".join(
+                loop_chunk_contents[:10])
             loop_prompt = f"""
 You are an expert knowledge assistant using iterative retrieval with chain-of-thought reasoning.
 Current Question: {question}
@@ -893,10 +954,12 @@ Your reasoning:
                 final_answer = initial_answer or reasoning
                 break
             current_query = new_query
-            await send_progress_update(client_id, "retrieval", min(90, 75 + step * 5), f"Iterative retrieval step {step}...")
+            await send_progress_update(client_id, "retrieval", min(90, 75 + step * 5),
+                                       f"Iterative retrieval step {step}...")
             try:
                 def _run_more_retrieval():
                     return kt_retriever.process_retrieval_results(current_query, top_k=config.retrieval.top_k_filter)
+
                 new_ret, _ = await loop.run_in_executor(None, _run_more_retrieval)
                 new_triples = new_ret.get('triples', []) or []
                 new_chunk_ids = new_ret.get('chunk_ids', []) or []
@@ -942,7 +1005,8 @@ Your reasoning:
                 "total_triples": len(final_triples),
                 "total_chunks": len(final_chunk_contents),
                 "sub_questions_count": len(sub_questions),
-                "triples_by_subquery": [s.get("triples_count", 0) for s in reasoning_steps if s.get("type") == "sub_question"]
+                "triples_by_subquery": [s.get("triples_count", 0) for s in reasoning_steps if
+                                        s.get("type") == "sub_question"]
             }
         }
 
@@ -963,7 +1027,7 @@ def prepare_subquery_visualization(sub_questions: List[Dict], reasoning_steps: L
     """Prepare subquery visualization"""
     nodes = [{"id": "original", "name": "Original Question", "category": "question", "symbolSize": 40}]
     links = []
-    
+
     for i, sub_q in enumerate(sub_questions):
         sub_id = f"sub_{i}"
         nodes.append({
@@ -973,7 +1037,7 @@ def prepare_subquery_visualization(sub_questions: List[Dict], reasoning_steps: L
             "symbolSize": 30
         })
         links.append({"source": "original", "target": sub_id, "name": "decomposed to"})
-    
+
     return {
         "nodes": nodes,
         "links": links,
@@ -983,12 +1047,13 @@ def prepare_subquery_visualization(sub_questions: List[Dict], reasoning_steps: L
         ]
     }
 
+
 def prepare_retrieved_graph_visualization(triples: List[str]) -> Dict:
     """Prepare retrieved knowledge visualization"""
     nodes = []
     links = []
     node_set = set()
-    
+
     for triple in triples[:10]:
         try:
             if triple.startswith('[') and triple.endswith(']'):
@@ -998,7 +1063,7 @@ def prepare_retrieved_graph_visualization(triples: List[str]) -> Dict:
                     continue
                 if len(parts) == 3:
                     source, relation, target = parts
-                    
+
                     for entity in [source, target]:
                         if entity not in node_set:
                             node_set.add(entity)
@@ -1008,7 +1073,7 @@ def prepare_retrieved_graph_visualization(triples: List[str]) -> Dict:
                                 "category": "entity",
                                 "symbolSize": 20
                             })
-                    
+
                     links.append({
                         "source": str(source),
                         "target": str(target),
@@ -1016,12 +1081,13 @@ def prepare_retrieved_graph_visualization(triples: List[str]) -> Dict:
                     })
         except:
             continue
-    
+
     return {
         "nodes": nodes,
         "links": links,
         "categories": [{"name": "entity", "itemStyle": {"color": "#95de64"}}]
     }
+
 
 def prepare_reasoning_flow_visualization(reasoning_steps: List[Dict]) -> Dict:
     """Prepare reasoning flow visualization"""
@@ -1035,17 +1101,18 @@ def prepare_reasoning_flow_visualization(reasoning_steps: List[Dict]) -> Dict:
             "chunks_count": step.get("chunks_count", 0),
             "processing_time": step.get("processing_time", 0)
         })
-    
+
     return {
         "steps": steps_data,
         "timeline": [step["processing_time"] for step in steps_data]
     }
 
+
 @app.get("/api/datasets")
 async def get_datasets():
     """Get list of available datasets"""
     datasets = []
-    
+
     # Check uploaded datasets
     upload_dir = "data/uploaded"
     if os.path.exists(upload_dir):
@@ -1063,7 +1130,7 @@ async def get_datasets():
                         "status": status,
                         "has_custom_schema": has_custom_schema
                     })
-    
+
     # Add demo dataset
     demo_corpus = "data/demo/demo_corpus.json"
     if os.path.exists(demo_corpus):
@@ -1071,12 +1138,13 @@ async def get_datasets():
         status = "ready" if os.path.exists(demo_graph) else "needs_construction"
         datasets.append({
             "name": "demo",
-            "type": "demo", 
+            "type": "demo",
             "status": status,
             "has_custom_schema": False
         })
-    
+
     return {"datasets": datasets}
+
 
 @app.post("/api/datasets/{dataset_name}/schema")
 async def upload_schema(dataset_name: str, schema_file: UploadFile = File(...)):
@@ -1107,62 +1175,65 @@ async def upload_schema(dataset_name: str, schema_file: UploadFile = File(...)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to upload schema: {str(e)}")
 
+
 @app.delete("/api/datasets/{dataset_name}")
 async def delete_dataset(dataset_name: str):
     """Delete a dataset and all its associated files"""
     try:
         if dataset_name == "demo":
             raise HTTPException(status_code=400, detail="Cannot delete demo dataset")
-        
+
         deleted_files = []
-        
+
         # Delete dataset directory
         dataset_dir = f"data/uploaded/{dataset_name}"
         if os.path.exists(dataset_dir):
             import shutil
             shutil.rmtree(dataset_dir)
             deleted_files.append(dataset_dir)
-        
+
         # Delete graph file
         graph_path = f"output/graphs/{dataset_name}_new.json"
         if os.path.exists(graph_path):
             os.remove(graph_path)
             deleted_files.append(graph_path)
-        
+
         # Delete schema file (if dataset-specific)
         schema_path = f"schemas/{dataset_name}.json"
         if os.path.exists(schema_path):
             os.remove(schema_path)
             deleted_files.append(schema_path)
-        
+
         # Delete cache files
         cache_dir = f"retriever/faiss_cache_new/{dataset_name}"
         if os.path.exists(cache_dir):
             import shutil
             shutil.rmtree(cache_dir)
             deleted_files.append(cache_dir)
-        
+
         # Delete chunk files
         chunk_file = f"output/chunks/{dataset_name}.txt"
         if os.path.exists(chunk_file):
             os.remove(chunk_file)
             deleted_files.append(chunk_file)
-        
+
         return {
             "success": True,
             "message": f"Dataset '{dataset_name}' deleted successfully",
             "deleted_files": deleted_files
         }
-    
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to delete dataset: {str(e)}")
+
 
 @app.post("/api/datasets/{dataset_name}/reconstruct")
 async def reconstruct_dataset(dataset_name: str, client_id: str = "default"):
     """Reconstruct graph for an existing dataset"""
     try:
         if not GRAPHRAG_AVAILABLE:
-            raise HTTPException(status_code=503, detail="GraphRAG components not available. Please install or configure them.")
+            raise HTTPException(status_code=503,
+                                detail="GraphRAG components not available. Please install or configure them.")
         # Check if dataset exists
         corpus_path = f"data/uploaded/{dataset_name}/corpus.json"
         if not os.path.exists(corpus_path):
@@ -1170,32 +1241,32 @@ async def reconstruct_dataset(dataset_name: str, client_id: str = "default"):
                 corpus_path = "data/demo/demo_corpus.json"
             else:
                 raise HTTPException(status_code=404, detail="Dataset not found")
-        
+
         await send_progress_update(client_id, "reconstruction", 5, "Starting reconstruction...")
-        
+
         # Delete existing graph file
         graph_path = f"output/graphs/{dataset_name}_new.json"
         if os.path.exists(graph_path):
             os.remove(graph_path)
             await send_progress_update(client_id, "reconstruction", 15, "Old graph file deleted...")
-        
+
         # Delete existing cache files
         cache_dir = f"retriever/faiss_cache_new/{dataset_name}"
         if os.path.exists(cache_dir):
             import shutil
             shutil.rmtree(cache_dir)
             await send_progress_update(client_id, "reconstruction", 25, "Cache files cleared...")
-        
+
         await send_progress_update(client_id, "reconstruction", 35, "Reinitializing graph builder...")
-        
+
         # Initialize config
         global config
         if config is None:
             config = get_config("config/base_config.yaml")
-        
+
         # Choose schema: dataset-specific or default demo
         schema_path = get_schema_path_for_dataset(dataset_name)
-        
+
         # Initialize KTBuilder
         builder = constructor.KTBuilder(
             dataset_name,
@@ -1203,19 +1274,19 @@ async def reconstruct_dataset(dataset_name: str, client_id: str = "default"):
             mode=config.construction.mode,
             config=config
         )
-        
+
         await send_progress_update(client_id, "reconstruction", 50, "Rebuilding knowledge graph...")
-        
+
         # Build knowledge graph
         def build_graph_sync():
             return builder.build_knowledge_graph(corpus_path)
-        
+
         # Run in executor to avoid blocking
         loop = asyncio.get_event_loop()
-        
+
         # Run graph reconstruction without simulated progress updates
         knowledge_graph = await loop.run_in_executor(None, build_graph_sync)
-        
+
         await send_progress_update(client_id, "reconstruction", 100, "Graph reconstruction completed!")
         # Notify completion via WebSocket
         try:
@@ -1227,13 +1298,13 @@ async def reconstruct_dataset(dataset_name: str, client_id: str = "default"):
             }, client_id)
         except Exception as _e:
             logger.warning(f"Failed to send completion message: {_e}")
-        
+
         return {
             "success": True,
             "message": "Dataset reconstructed successfully",
             "dataset_name": dataset_name
         }
-    
+
     except Exception as e:
         await send_progress_update(client_id, "reconstruction", 0, f"Reconstruction failed: {str(e)}")
         try:
@@ -1247,11 +1318,12 @@ async def reconstruct_dataset(dataset_name: str, client_id: str = "default"):
             logger.warning(f"Failed to send error message: {_e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
 @app.get("/api/graph/{dataset_name}")
 async def get_graph_data(dataset_name: str):
     """Get graph visualization data"""
     graph_path = f"output/graphs/{dataset_name}_new.json"
-    
+
     if not os.path.exists(graph_path):
         # Return demo data
         return {
@@ -1268,8 +1340,9 @@ async def get_graph_data(dataset_name: str):
             ],
             "stats": {"total_nodes": 2, "total_edges": 1, "displayed_nodes": 2, "displayed_edges": 1}
         }
-    
+
     return await prepare_graph_visualization(graph_path)
+
 
 @app.on_event("startup")
 async def startup_event():
@@ -1278,8 +1351,9 @@ async def startup_event():
     os.makedirs("output/graphs", exist_ok=True)
     os.makedirs("output/logs", exist_ok=True)
     os.makedirs("schemas", exist_ok=True)
-    
+
     logger.info("🚀 Youtu-GraphRAG Unified Interface initialized")
+
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)

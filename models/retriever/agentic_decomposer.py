@@ -22,81 +22,59 @@ class GraphQ:
         with open(schema_path, "r") as f:
             schema = f.read()
         return schema
-    
+
     def prompt_format(self, schema: str, question: str) -> str:
+        # 尝试从 Config 文件加载 Prompt (这是主路径)
         if self.config:
-            if self.dataset_name == "anony_chs":
-                return self.config.get_prompt_formatted("decomposition", "anony_chs", ontology=schema, question=question)
-            else:
-                return self.config.get_prompt_formatted("decomposition", "general", ontology=schema, question=question)
+            # 如果你有特定的中文数据集名称，可以在这里加判断
+            return self.config.get_prompt_formatted("decomposition", "general", ontology=schema, question=question)
+
+        # 兜底 Prompt (Fallback) - 如果 Config 加载失败，使用这里的代码
+        # 我们将其修改为【学术通用版】，适配你的新 Schema
         else:
-            if self.dataset_name == "anony_chs":
-                return f"""
-                你是一个专业的问题分解大师，请根据以下问题和图本体模式，将问题分解为2-3个子问题。
-                要求：
-                1. 每个子问题必须：
-                   - 明确且专注于一个事实或关系，通过识别所有实体、关系和推理步骤
-                   - 明确引用原始问题中的实体和关系
-                   - 设计为检索最终答案所需的相关知识
-                2. 对于简单问题（1-2跳），返回原始问题作为单个子问题
-                3. 返回一个JSON数组，每个子问题是一个字符串。
-                
-                问题：{question}
-                
-                图本体模式：{schema}
-                
-                请返回一个JSON数组，每个子问题是一个字符串。
-                示例：
-                原始问题："智取生辰纲事件中，PERSON#1的策略为什么能够成功"
-                子问题：
-                [
-                    {{"sub-question": "智取生辰纲中PERSON#1的策略是什么？"}},
-                    {{"sub-question": "智取生辰纲中的PERSON、LOCATION有什么特殊属性？"}},
-                ]
-                如果是简单问题，返回原始问题作为单个子问题。
-                原始问题："智取生辰纲事件中，PERSON#1是谁"
-                子问题：
-                [
-                    {{"sub-question": "智取生辰纲事件中，PERSON#1是谁？"}}
-                ]
-                """
-            else:
-                return f"""
-                You are a professional question decomposition expert specializing in multi-hop reasoning.
-                Given the following schema and the question, decompose the complex question into 2-3 focused sub-questions.
+            return f"""
+            你是一个专业的学术问题分解专家，擅长处理多跳推理和综述类问题。
+            请根据以下【图谱 Schema】和【用户问题】，将复杂问题分解为 2-4 个具体的子问题。
 
-                CRITICAL REQUIREMENTS:
-                1. Each sub-question must be:
-                   - Specific and focused on a single fact or relationship by identifing all entities, relationships, and reasoning steps needed
-                   - Answerable independently with the given schema
-                   - Explicitly reference entities and relations from the original question
-                   - Designed to retrieve relevant knowledge for the final answer
+            【关键要求】：
+            1. **子问题独立性**：每个子问题应能独立检索，专注于特定的实体（论文/模型/作者）或关系。
+            2. **学术相关性**：子问题应涉及 Schema 中定义的类型（如：模型的效果、论文的发表时间、方法的局限性）。
+            3. **简单问题**：如果问题是简单的（如“X的作者是谁”），直接返回原问题作为唯一的子问题。
+            4. **格式**：只返回一个 JSON 对象。
 
-                2. For simple questions (1-2 hop), return the original question as a single sub-question
-                3. Return a JSON array, each sub-question is a string.
+            【图谱 Schema】：
+            {schema}
 
-                Graph Schema:
-                {schema}
+            【用户问题】：{question}
 
-                Question: {question}
+            【示例 1 - 复杂对比】：
+            用户问题："对比 Transformer 和 LSTM 在文本分类任务上的表现及局限性。"
+            输出：
+            {{
+              "sub_questions": [
+                {{"sub-question": "Transformer 在文本分类任务上的表现效果和局限性是什么？"}},
+                {{"sub-question": "LSTM 在文本分类任务上的表现效果和局限性是什么？"}},
+                {{"sub-question": "比较 Transformer 和 LSTM 的各项评价指标。"}},
+              ],
+              "involved_types": {{
+                "nodes": ["模型", "任务", "评价指标", "挑战痛点"],
+                "relations": ["应用于", "达到效果", "存在局限"]
+              }}
+            }}
 
-                Example for complex question:
-                Original: "Which film has the director died earlier, Ethnic Notions or Gordon Of Ghost City?"
-                Sub-questions:
-                [
-                    {{"sub-question": "Who is the director of Ethnic Notions?"}},
-                    {{"sub-question": "Who is the director of Gordon Of Ghost City?"}},
-                    {{"sub-question": "When did the director of Ethnic Notions die?"}},
-                    {{"sub-question": "When did the director of Gordon Of Ghost City die?"}}
-                ]
-
-                Example for simple question:
-                Original: "What is the capital of France?"
-                Sub-questions:
-                [
-                    {{"sub-question": "What is the capital of France?"}}
-                ]
-                """
+            【示例 2 - 简单查询】：
+            用户问题："郭海湘发表了哪些关于突发事件的论文？"
+            输出：
+            {{
+              "sub_questions": [
+                {{"sub-question": "郭海湘撰写了哪些研究主题涉及突发事件的论文？"}}
+              ],
+              "involved_types": {{
+                "nodes": ["学者", "论文", "研究主题"],
+                "relations": ["撰写", "利用"]
+              }}
+            }}
+            """
     
     def decompose(self, question: str, schema_path: str) -> dict:
         schema = self.read_schema(schema_path)

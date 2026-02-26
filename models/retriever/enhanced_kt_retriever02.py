@@ -4,8 +4,7 @@ import threading
 import time
 from functools import lru_cache
 from typing import Dict, List, Optional, Set, Tuple
-# 设置镜像地址
-os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
+
 import faiss
 import numpy as np
 import spacy
@@ -58,7 +57,7 @@ class KTRetriever:
             qa_encoder = qa_encoder or SentenceTransformer(config.embeddings.model_name)
         
         self.graph = graph_processor.load_graph_from_json(json_path)
-        self.qa_encoder = qa_encoder or SentenceTransformer("all-MiniLM-L6-v2")
+        self.qa_encoder = qa_encoder or SentenceTransformer('all-MiniLM-L6-v2')
 
         self.llm_client = call_llm_api.LLMCompletionCall()
         
@@ -538,51 +537,23 @@ class KTRetriever:
     # [新增/明确] 原子化接口 1：仅查找实体
     def search_nodes_only(self, query: str, top_k: int = 5) -> List[Dict]:
         """
-        只进行实体检索，返回结构化的节点信息列表。
+        只进行实体检索，返回结构化的节点信息列表，不包含三元组或Chunk。
+        供 Agent 确认实体是否存在或获取实体属性。
         """
-        # 1. 获取查询向量 (确保在正确设备上)
         query_embed = self._get_query_embedding(query)
-
-        # 2. 调用 faiss_retriever 的底层搜索
-        # 注意：这里需要确保 faiss_retriever 有 node_index 属性
-        # 如果 faiss_filter.py 中 node_index 是动态加载的，确保 build_indices() 已被调用
-        if not hasattr(self.faiss_retriever, 'node_index') or self.faiss_retriever.node_index is None:
-            logger.warning("FAISS node_index not initialized, attempting to load...")
-            self.faiss_retriever._load_indices()  # 尝试加载
-
-        if not hasattr(self.faiss_retriever, 'node_index') or self.faiss_retriever.node_index is None:
-            logger.error("Failed to load node_index.")
-            return []
-
-        # 3. 执行搜索 (复用 faiss_filter 的逻辑)
-        # 注意：FAISS 需要 numpy 数组
-        query_np = query_embed.cpu().numpy().reshape(1, -1)
-        scores, indices = self.faiss_retriever.node_index.search(query_np, top_k)
+        # 复用你原有的 _node_relation_retrieval 中的一部分逻辑
+        # 这里只做向量搜索，不进行多跳扩展
+        raw_results = self.faiss_retriever.node_index.search(...)
 
         results = []
-        for idx, score in zip(indices[0], scores[0]):
-            if idx == -1: continue
-
-            # 从映射中找 Node ID
-            node_id_str = str(idx)
-            if node_id_str in self.faiss_retriever.node_map:
-                real_node_id = self.faiss_retriever.node_map[node_id_str]
-
-                if real_node_id in self.graph.nodes:
-                    node_data = self.graph.nodes[real_node_id]
-                    # 处理属性，防止有些节点没有 properties
-                    props = node_data.get("properties", {})
-                    if not props:
-                        # 尝试从 data 本身获取
-                        props = {k: v for k, v in node_data.items() if k not in ['name', 'description']}
-
-                    results.append({
-                        "id": real_node_id,
-                        "name": node_data.get("name", "Unknown"),
-                        "description": node_data.get("description", ""),
-                        "attributes": props,
-                        "score": float(score)
-                    })
+        for node_id in raw_results:
+            node_data = self.graph.nodes[node_id]
+            results.append({
+                "id": node_id,
+                "name": node_data.get("name"),
+                "description": node_data.get("description"),
+                "attributes": node_data.get("properties")  # 关键：返回属性供代码分析
+            })
         return results
 
     # [新增/明确] 原子化接口 2：获取邻居关系
@@ -607,7 +578,7 @@ class KTRetriever:
                 })
         return neighbors
 
-    # [新增/明确] 原子化接口 获取社区摘要
+    # [新增/明确] 原子化接口 3：获取社区摘要
     def get_community_summary(self, level: int = 0) -> List[str]:
         """
         获取指定层级的社区摘要。供 Survey Agent 使用。
@@ -616,35 +587,6 @@ class KTRetriever:
         summaries = []
         # ... 从 self.graph 或 tree_comm.py 的结果中读取 ...
         return summaries
-
-        # 在 KTRetriever 类中增加：
-
-    def get_node_content(self, node_id: str) -> str:
-        """
-        [新增] 获取节点关联的原始文本块 (Chunk)。
-        这是解决图稀疏问题的关键：当没有边时，阅读原文。
-        """
-        if node_id not in self.graph.nodes:
-            return "Node not found."
-
-        node_data = self.graph.nodes[node_id]
-        # 兼容旧版和新版 schema，获取 chunk id
-        chunk_id = node_data.get("chunk id") or node_data.get("properties", {}).get("chunk id")
-
-        if not chunk_id:
-            return "No text chunk associated with this node.Try searching for related entities."
-
-        # 从 self.chunk2id 中获取文本 (确保 __init__ 中加载了 self.chunk2id)
-        if hasattr(self, "chunk2id") and chunk_id in self.chunk2id:
-            return self.chunk2id[chunk_id]
-
-        # 尝试重新加载 chunk 文件（防止初始化时文件还没生成）
-        if not self.chunk2id:
-             self._reload_chunks() # 假设你写个 helper，或者直接在这里简单读一下
-             if chunk_id in self.chunk2id:
-                 return self.chunk2id[chunk_id]
-
-        return f"Chunk content not found for id: {chunk_id}"
 
     def retrieve(self, question: str) -> Dict:
         """

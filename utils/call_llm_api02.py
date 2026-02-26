@@ -3,6 +3,7 @@ import re
 from typing import Optional
 
 # 引入 LangChain 的 OpenAI 集成
+# 请确保已安装: pip install langchain-openai langchain-core
 from langchain_openai import ChatOpenAI, AzureChatOpenAI
 from langchain_core.messages import HumanMessage
 from dotenv import load_dotenv
@@ -29,7 +30,7 @@ class LLMCompletionCall:
         self.openai_provider = os.getenv("OPENAI_PROVIDER", "openai").lower()
 
         # --- LangChain 对象初始化 ---
-        # 统一设置 temperature=0.3
+        # 统一设置 temperature=0.3 以保持与原项目一致的生成稳定性
         if self.openai_provider == "azure":
             self.api_version = os.getenv("API_VERSION", "2025-01-01-preview")
             self._lc_model = AzureChatOpenAI(
@@ -50,7 +51,7 @@ class LLMCompletionCall:
 
     def call_api(self, content: str) -> str:
         """
-        供原有 Youtu-GraphRAG 代码调用。
+        [兼容接口] 供原有 Youtu-GraphRAG 代码调用。
         输入 Prompt 字符串，返回清洗后的文本字符串。
 
         Args:
@@ -91,7 +92,7 @@ class LLMCompletionCall:
 
     def _clean_llm_content(self, text: str) -> str:
         """
-       保持原有的清洗逻辑，确保下游 JSON 解析不报错。
+        [保持不变] 保持原有的清洗逻辑，确保下游 JSON 解析不报错。
         """
         if not isinstance(text, str):
             return ""

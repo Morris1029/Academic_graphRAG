@@ -9,6 +9,9 @@ import numpy as np
 import scipy.sparse as sp
 import torch
 import json_repair
+import os
+# 设置镜像地址
+os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
 from sentence_transformers import SentenceTransformer
 from sklearn.cluster import KMeans
 from sklearn.metrics.pairwise import cosine_similarity

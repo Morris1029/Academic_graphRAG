@@ -38,7 +38,7 @@ class ConstructionConfig:
     
     def __post_init__(self):
         if self.datasets_no_chunk is None:
-            self.datasets_no_chunk = ["hotpot", "2wiki", "musique", "graphrag-bench", "anony_chs", "anony_eng"]
+            self.datasets_no_chunk = ["hotpot"]
 
 @dataclass
 class TreeCommConfig:
@@ -152,7 +152,8 @@ class ConfigManager:
         self.output: Optional[OutputConfig] = None
         self.performance: Optional[PerformanceConfig] = None
         self.evaluation: Optional[EvaluationConfig] = None
-
+        # [新增] 存储当前活跃数据集的名称
+        self.active_dataset: str = "demo"
         self.load_config()
     
     def _get_default_config_path(self) -> str:
@@ -180,6 +181,8 @@ class ConfigManager:
     
     def _parse_config(self) -> None:
         """Parse the loaded configuration data into structured objects."""
+        #  解析 active_dataset
+        self.active_dataset = self.config_data.get("active_dataset", "demo")
         datasets_data = self.config_data.get("datasets", {})
         self.datasets = {
             name: DatasetConfig(**config) 

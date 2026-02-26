@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Youtu-GraphRAG - Enterprise-level solutions for complex reasoning</title>
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+
+    <!-- 引入拆分后的 CSS 文件 -->
+    <link rel="stylesheet" href="style.css">
+
+    <!-- CDN Dependencies (保持不变) -->
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/axios@1.6.2/dist/axios.min.js"></script>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <div class="header">
+            <div class="lang-switch">
+                <button class="lang-btn" id="langEnBtn" onclick="setLanguage('en')">EN</button>
+                <button class="lang-btn" id="langZhBtn" onclick="setLanguage('zh')">中文</button>
+            </div>
+            <div class="logo-container">
+                <img src="/assets/logo.png" alt="Youtu-GraphRAG Logo" class="logo-image">
+                <div class="logo">Youtu-GraphRAG</div>
+            </div>
+            <div class="subtitle" id="subtitleText">✨ Vertically Unified Agents for Graph Retrieval-Augmented Complex Reasoning ✨</div>
+        </div>
+
+        <!-- Navigation Tabs -->
+        <div class="tabs">
+            <div class="tab active" id="tabDashboard" onclick="switchTab('dashboard')">📊 Dashboard</div>
+            <div class="tab" id="tabUpload" onclick="switchTab('upload')">📤 Data Upload</div>
+            <div class="tab" id="tabGraph" onclick="switchTab('graph')">🕸️ Graph Visualization</div>
+            <div class="tab" id="tabQA" onclick="switchTab('qa')">🤖 Q&A Interface</div>
+        </div>
+
+        <!-- Dashboard Tab -->
+        <div id="dashboard" class="tab-content active">
+            <div class="card">
+                <h2 id="systemOverviewTitle">System Overview</h2>
+                <div class="grid">
+                    <div class="stat-card">
+                        <div class="stat-number" id="stat-datasets">0</div>
+                        <div class="stat-label">Datasets</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-number" id="stat-graphs">0</div>
+                        <div class="stat-label">Constructed Graphs</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-number" id="stat-questions">0</div>
+                        <div class="stat-label">Questions Asked</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-number">
+                            <span class="status-badge status-ready">Connected</span>
+                        </div>
+                        <div class="stat-label">System Status</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <h2 id="quickActionsTitle">Quick Actions</h2>
+                <div class="quick-actions">
+                    <button class="btn" id="qaUploadDocsBtn" onclick="switchTab('upload')">📤 Upload Documents</button>
+                    <button class="btn" id="qaViewGraphBtn" onclick="switchTab('graph')">🕸️ View Graph</button>
+                    <button class="btn" id="qaQueryBtn" onclick="switchTab('qa')">🤖 Query</button>
+                    <button class="btn btn-secondary" id="qaRefreshBtn" onclick="refreshData()">🔄 Refresh</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Upload Tab -->
+        <div id="upload" class="tab-content">
+            <div class="card">
+                <h2 id="uploadDocumentsTitle">Upload Documents</h2>
+                <div class="upload-area" id="uploadArea">
+                    <div class="upload-icon">📁</div>
+                    <h3 id="uploadDragTitle">Drag & Drop Files Here</h3>
+                    <p id="uploadDragDesc">or click to browse files</p>
+                    <p id="uploadSupports" style="font-size: 12px; color: rgba(255,255,255,0.6); margin-top: 12px;">
+                        Currently supports: .txt, .md, .json, .pdf, .docx, .doc
+                    </p>
+                    <div style="margin-top: 20px; padding: 15px; background: rgba(255,255,255,0.1); border-radius: 10px; text-align: left; font-size: 11px; color: rgba(255,255,255,0.8);">
+                        <div id="uploadSampleHeader" style="font-weight: 600; margin-bottom: 8px;">📄 Sample Format (.json):</div>
+                        <pre style="margin: 0; font-family: 'JetBrains Mono', 'Monaco', 'Menlo', 'Ubuntu Mono', monospace; background: rgba(0,0,0,0.3); padding: 8px; border-radius: 5px; overflow-x: auto;">
+  [
+    {
+      "title": "Sample doc1",
+      "text": "This is a sample document content..."
+    },
+    {
+      "title": "Sample doc2",
+      "text": "This is a sample document content..."
+    }
+  ]
+</pre>
+                    </div>
+                    <input type="file" id="fileInput" multiple accept=".txt,.json,.md,.pdf,.docx,.doc" style="display: none;">
+                </div>
+
+                <div id="fileList" class="file-list hidden"></div>
+
+                <div style="margin-top: 20px;">
+                    <button class="btn" id="uploadBtn" disabled onclick="uploadFiles()">Upload Files</button>
+                    <button class="btn btn-secondary" id="clearUploadBtn" onclick="clearFiles()">Clear</button>
+                </div>
+
+                <div id="uploadProgress" class="hidden">
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="progressFill"></div>
+                    </div>
+                    <div id="progressText">Uploading...</div>
+                </div>
+            </div>
+
+            <div class="card">
+                <h2 id="availableDatasetsTitle">Available Datasets</h2>
+                <div id="datasetsList"></div>
+            </div>
+        </div>
+
+        <!-- Graph Tab -->
+        <div id="graph" class="tab-content">
+            <div class="card">
+                <h2 id="knowledgeTreeTitle">Knowledge Tree Visualization</h2>
+                <div class="input-group">
+                    <label id="labelGraphDataset">Dataset:</label>
+                    <select class="select" id="graphDataset" onchange="loadGraphData()">
+                        <option value="">Select a dataset...</option>
+                    </select>
+                </div>
+                <div class="chart-container" id="graphChart"></div>
+            </div>
+        </div>
+
+        <!-- Q&A Tab -->
+        <div id="qa" class="tab-content">
+            <div class="card">
+                <h2 id="queryPanelTitle">Query Panel</h2>
+                <div class="input-group">
+                    <label id="labelQADataset">Dataset:</label>
+                    <select class="select" id="qaDataset">
+                        <option value="">Select a dataset...</option>
+                    </select>
+                </div>
+                <div class="input-group">
+                    <label id="labelQuery">Query:</label>
+                    <textarea class="textarea" id="questionInput" placeholder="Enter your question here...">When was the person who Messi's goals in Copa del Rey compared to get signed by Barcelona?</textarea>
+                </div>
+                <div class="qa-action-row">
+                    <button class="btn" onclick="askQuestion()" id="askBtn">Ask Question</button>
+                    <div id="qaCompletionBadge" class="completion-badge" style="display:none;">✔️ Completed</div>
+                </div>
+
+                <div id="qaLoading" class="loading">
+                    <div class="spinner"></div>
+                    <div id="qaProcessingText">Processing your question...</div>
+                    <div id="qaMessages" style="margin-top: 10px;"></div>
+                </div>
+
+                <div id="answerSection" class="hidden">
+                    <h3 id="answerTitle">Answer:</h3>
+                    <div class="answer-content" id="answerContent"></div>
+
+                    <!-- Retrieval Details Container -->
+                    <div id="retrievalDetails" class="retrieval-details" style="display: none;"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Messages -->
+        <div id="messages"></div>
+    </div>
+
+    <!-- 引入拆分后的 JS 文件 -->
+    <script src="script.js"></script>
+</body>
+</html>

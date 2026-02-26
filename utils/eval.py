@@ -1,3 +1,5 @@
+from click import prompt
+
 from utils import call_llm_api
 
 class Eval:
@@ -16,3 +18,4 @@ class Eval:
         Return only "1" (correct) or "0" (incorrect):
         """
         return self.llm_client.call_api(prompt)
+
