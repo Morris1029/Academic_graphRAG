@@ -1,184 +1,192 @@
-<!DOCTYPE html>
-<html lang="en">
+﻿<!DOCTYPE html>
+<html lang="zh">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Youtu-GraphRAG - Enterprise-level solutions for complex reasoning</title>
+    <title>基于图检索增强生成的跨学科知识发现研究 | Youtu-GraphRAG</title>
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
     <meta http-equiv="Pragma" content="no-cache">
     <meta http-equiv="Expires" content="0">
-
-    <!-- 引入拆分后的 CSS 文件 -->
     <link rel="stylesheet" href="style.css">
-
-    <!-- CDN Dependencies (保持不变) -->
     <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/axios@1.6.2/dist/axios.min.js"></script>
 </head>
 <body>
     <div class="container">
-        <!-- Header -->
         <div class="header">
             <div class="lang-switch">
                 <button class="lang-btn" id="langEnBtn" onclick="setLanguage('en')">EN</button>
                 <button class="lang-btn" id="langZhBtn" onclick="setLanguage('zh')">中文</button>
             </div>
+
             <div class="logo-container">
                 <img src="/assets/logo.png" alt="Youtu-GraphRAG Logo" class="logo-image">
-                <div class="logo">Youtu-GraphRAG</div>
+                <div>
+                    <div class="project-title">基于图检索增强生成的跨学科知识发现研究</div>
+                    <div class="logo">Youtu-GraphRAG</div>
+                </div>
             </div>
-            <div class="subtitle" id="subtitleText">✨ Vertically Unified Agents for Graph Retrieval-Augmented Complex Reasoning ✨</div>
+
+            <div class="subtitle" id="subtitleText">面向跨学科场景的图检索增强生成研究平台</div>
+            <p class="hero-meta">支持文档上传、知识图谱构建、研究问答与子图追踪分析</p>
         </div>
 
-        <!-- Navigation Tabs -->
-        <div class="tabs">
-            <div class="tab active" id="tabDashboard" onclick="switchTab('dashboard')">📊 Dashboard</div>
-            <div class="tab" id="tabUpload" onclick="switchTab('upload')">📤 Data Upload</div>
-            <div class="tab" id="tabGraph" onclick="switchTab('graph')">🕸️ Graph Visualization</div>
-            <div class="tab" id="tabQA" onclick="switchTab('qa')">🤖 Q&A Interface</div>
+        <div class="tabs" role="tablist" aria-label="Main Navigation">
+            <div class="tab active" id="tabDashboard" onclick="switchTab('dashboard', this)">概览</div>
+            <div class="tab" id="tabUpload" onclick="switchTab('upload', this)">数据上传</div>
+            <div class="tab" id="tabGraph" onclick="switchTab('graph', this)">图谱可视化</div>
+            <div class="tab" id="tabQA" onclick="switchTab('qa', this)">研究问答</div>
         </div>
 
-        <!-- Dashboard Tab -->
         <div id="dashboard" class="tab-content active">
             <div class="card">
-                <h2 id="systemOverviewTitle">System Overview</h2>
+                <h2 id="systemOverviewTitle">系统概览</h2>
                 <div class="grid">
                     <div class="stat-card">
                         <div class="stat-number" id="stat-datasets">0</div>
-                        <div class="stat-label">Datasets</div>
+                        <div class="stat-label" id="statDatasetsLabel">数据集数量</div>
                     </div>
                     <div class="stat-card">
                         <div class="stat-number" id="stat-graphs">0</div>
-                        <div class="stat-label">Constructed Graphs</div>
+                        <div class="stat-label" id="statGraphsLabel">已构建图谱</div>
                     </div>
                     <div class="stat-card">
                         <div class="stat-number" id="stat-questions">0</div>
-                        <div class="stat-label">Questions Asked</div>
+                        <div class="stat-label" id="statQuestionsLabel">问答次数</div>
                     </div>
                     <div class="stat-card">
                         <div class="stat-number">
-                            <span class="status-badge status-ready">Connected</span>
+                            <span class="status-badge status-ready" id="systemStatusBadge">已连接</span>
                         </div>
-                        <div class="stat-label">System Status</div>
+                        <div class="stat-label" id="systemStatusLabel">系统状态</div>
                     </div>
                 </div>
             </div>
 
             <div class="card">
-                <h2 id="quickActionsTitle">Quick Actions</h2>
+                <h2 id="quickActionsTitle">快捷操作</h2>
                 <div class="quick-actions">
-                    <button class="btn" id="qaUploadDocsBtn" onclick="switchTab('upload')">📤 Upload Documents</button>
-                    <button class="btn" id="qaViewGraphBtn" onclick="switchTab('graph')">🕸️ View Graph</button>
-                    <button class="btn" id="qaQueryBtn" onclick="switchTab('qa')">🤖 Query</button>
-                    <button class="btn btn-secondary" id="qaRefreshBtn" onclick="refreshData()">🔄 Refresh</button>
+                    <button class="btn" id="qaUploadDocsBtn" onclick="switchTab('upload', document.getElementById('tabUpload'))">上传文档</button>
+                    <button class="btn" id="qaViewGraphBtn" onclick="switchTab('graph', document.getElementById('tabGraph'))">查看图谱</button>
+                    <button class="btn" id="qaQueryBtn" onclick="switchTab('qa', document.getElementById('tabQA'))">发起问答</button>
+                    <button class="btn btn-secondary" id="qaRefreshBtn" onclick="refreshData()">刷新数据</button>
+                </div>
+            </div>
+
+            <div class="card">
+                <h2 id="researchInsightTitle">研究导向</h2>
+                <div class="research-grid">
+                    <div class="research-card">
+                        <h3 id="researchRouteTitle">研究路线</h3>
+                        <p id="researchRouteDesc">知识图谱构建 → GraphRAG 检索推理 → 评估闭环</p>
+                    </div>
+                    <div class="research-card">
+                        <h3 id="researchEvalTitle">评估指标</h3>
+                        <p id="researchEvalDesc">答案准确性、推理可解释性、跨学科关联质量</p>
+                    </div>
+                    <div class="research-card">
+                        <h3 id="researchPlanTitle">阶段进度</h3>
+                        <p id="researchPlanDesc">数据与图谱 / 系统实验 / 评估与论文写作</p>
+                    </div>
                 </div>
             </div>
         </div>
 
-        <!-- Upload Tab -->
         <div id="upload" class="tab-content">
             <div class="card">
-                <h2 id="uploadDocumentsTitle">Upload Documents</h2>
+                <h2 id="uploadDocumentsTitle">上传文档</h2>
                 <div class="upload-area" id="uploadArea">
-                    <div class="upload-icon">📁</div>
-                    <h3 id="uploadDragTitle">Drag & Drop Files Here</h3>
-                    <p id="uploadDragDesc">or click to browse files</p>
-                    <p id="uploadSupports" style="font-size: 12px; color: rgba(255,255,255,0.6); margin-top: 12px;">
-                        Currently supports: .txt, .md, .json, .pdf, .docx, .doc
-                    </p>
-                    <div style="margin-top: 20px; padding: 15px; background: rgba(255,255,255,0.1); border-radius: 10px; text-align: left; font-size: 11px; color: rgba(255,255,255,0.8);">
-                        <div id="uploadSampleHeader" style="font-weight: 600; margin-bottom: 8px;">📄 Sample Format (.json):</div>
-                        <pre style="margin: 0; font-family: 'JetBrains Mono', 'Monaco', 'Menlo', 'Ubuntu Mono', monospace; background: rgba(0,0,0,0.3); padding: 8px; border-radius: 5px; overflow-x: auto;">
-  [
-    {
-      "title": "Sample doc1",
-      "text": "This is a sample document content..."
-    },
-    {
-      "title": "Sample doc2",
-      "text": "This is a sample document content..."
-    }
-  ]
-</pre>
+                    <div class="upload-icon">FILE</div>
+                    <h3 id="uploadDragTitle">拖拽文件到此区域</h3>
+                    <p id="uploadDragDesc">或点击选择文件</p>
+                    <p id="uploadSupports" class="support-text">当前支持：.txt、.md、.json、.pdf、.docx、.doc</p>
+                    <div class="sample-box">
+                        <div id="uploadSampleHeader" class="sample-title">示例格式（.json）</div>
+                        <pre>[
+  {
+    "title": "Sample doc1",
+    "text": "This is a sample document content..."
+  },
+  {
+    "title": "Sample doc2",
+    "text": "This is a sample document content..."
+  }
+]</pre>
                     </div>
                     <input type="file" id="fileInput" multiple accept=".txt,.json,.md,.pdf,.docx,.doc" style="display: none;">
                 </div>
 
                 <div id="fileList" class="file-list hidden"></div>
 
-                <div style="margin-top: 20px;">
-                    <button class="btn" id="uploadBtn" disabled onclick="uploadFiles()">Upload Files</button>
-                    <button class="btn btn-secondary" id="clearUploadBtn" onclick="clearFiles()">Clear</button>
+                <div class="action-row">
+                    <button class="btn" id="uploadBtn" disabled onclick="uploadFiles()">上传文件</button>
+                    <button class="btn btn-secondary" id="clearUploadBtn" onclick="clearFiles()">清空</button>
                 </div>
 
                 <div id="uploadProgress" class="hidden">
                     <div class="progress-bar">
                         <div class="progress-fill" id="progressFill"></div>
                     </div>
-                    <div id="progressText">Uploading...</div>
+                    <div id="progressText">上传中...</div>
                 </div>
             </div>
 
             <div class="card">
-                <h2 id="availableDatasetsTitle">Available Datasets</h2>
+                <h2 id="availableDatasetsTitle">可用数据集</h2>
                 <div id="datasetsList"></div>
             </div>
         </div>
 
-        <!-- Graph Tab -->
         <div id="graph" class="tab-content">
             <div class="card">
-                <h2 id="knowledgeTreeTitle">Knowledge Tree Visualization</h2>
+                <h2 id="knowledgeTreeTitle">知识图谱可视化</h2>
                 <div class="input-group">
-                    <label id="labelGraphDataset">Dataset:</label>
+                    <label id="labelGraphDataset">数据集：</label>
                     <select class="select" id="graphDataset" onchange="loadGraphData()">
-                        <option value="">Select a dataset...</option>
+                        <option value="">请选择数据集...</option>
                     </select>
                 </div>
+                <p class="section-hint" id="graphHintText">提示：深色图谱面板用于强化可解释路径，支持节点关系与子图结构观察。</p>
                 <div class="chart-container" id="graphChart"></div>
             </div>
         </div>
 
-        <!-- Q&A Tab -->
         <div id="qa" class="tab-content">
             <div class="card">
-                <h2 id="queryPanelTitle">Query Panel</h2>
+                <h2 id="queryPanelTitle">研究问答面板</h2>
                 <div class="input-group">
-                    <label id="labelQADataset">Dataset:</label>
+                    <label id="labelQADataset">数据集：</label>
                     <select class="select" id="qaDataset">
-                        <option value="">Select a dataset...</option>
+                        <option value="">请选择数据集...</option>
                     </select>
                 </div>
                 <div class="input-group">
-                    <label id="labelQuery">Query:</label>
-                    <textarea class="textarea" id="questionInput" placeholder="Enter your question here...">When was the person who Messi's goals in Copa del Rey compared to get signed by Barcelona?</textarea>
+                    <label id="labelQuery">研究问题：</label>
+                    <textarea class="textarea" id="questionInput" placeholder="请输入研究问题，支持复杂推理与跨学科关联检索..."></textarea>
                 </div>
+                <p class="section-hint" id="qaHintText">示例：大语言模型技术在不同学科中的应用路径有哪些共性与差异？</p>
                 <div class="qa-action-row">
-                    <button class="btn" onclick="askQuestion()" id="askBtn">Ask Question</button>
-                    <div id="qaCompletionBadge" class="completion-badge" style="display:none;">✔️ Completed</div>
+                    <button class="btn" onclick="askQuestion()" id="askBtn">开始问答</button>
+                    <div id="qaCompletionBadge" class="completion-badge" style="display:none;">已完成</div>
                 </div>
 
                 <div id="qaLoading" class="loading">
                     <div class="spinner"></div>
-                    <div id="qaProcessingText">Processing your question...</div>
+                    <div id="qaProcessingText">正在处理你的问题...</div>
                     <div id="qaMessages" style="margin-top: 10px;"></div>
                 </div>
 
                 <div id="answerSection" class="hidden">
-                    <h3 id="answerTitle">Answer:</h3>
+                    <h3 id="answerTitle">答案：</h3>
                     <div class="answer-content" id="answerContent"></div>
-
-                    <!-- Retrieval Details Container -->
                     <div id="retrievalDetails" class="retrieval-details" style="display: none;"></div>
                 </div>
             </div>
         </div>
 
-        <!-- Messages -->
         <div id="messages"></div>
     </div>
 
-    <!-- 引入拆分后的 JS 文件 -->
     <script src="script.js"></script>
 </body>
 </html>
