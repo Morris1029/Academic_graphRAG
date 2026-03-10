@@ -6,35 +6,90 @@ let graphChart = null;
 // let queryChart = null;
 let questionCount = 0;
 
-// i18n configuration: default to English; switch to Chinese when lang starts with 'zh'
-let currentLang = (document.documentElement.lang || 'en').toLowerCase().startsWith('zh') ? 'zh' : 'en';
+// i18n configuration: default to Chinese for this project
+let currentLang = 'zh';
 const i18n = {
     en: {
-        processing: 'Processing your question...',
+        processing: 'Processing your research question...',
         pleaseSelectAndEnter: 'Please select a dataset and enter a question',
-        subtitle: '✨ Vertically Unified Agents for Graph Retrieval-Augmented Complex Reasoning ✨',
-        tabs: { dashboard: '📊 Dashboard', upload: '📤 Data Upload', graph: '🕸️ Graph Visualization', qa: '🤖 Q&A Interface' },
+        subtitle: 'Interdisciplinary knowledge discovery with Graph Retrieval-Augmented Generation',
+        tabs: { dashboard: 'Overview', upload: 'Data Upload', graph: 'Graph Visualization', qa: 'Research Q&A' },
         systemOverview: 'System Overview',
+        statDatasetsLabel: 'Datasets',
+        statGraphsLabel: 'Constructed Graphs',
+        statQuestionsLabel: 'Questions Asked',
+        systemStatusLabel: 'System Status',
+        systemStatusConnected: 'Connected',
+        researchInsightTitle: 'Research Orientation',
+        researchRouteTitle: 'Research Route',
+        researchRouteDesc: 'Knowledge graph construction -> GraphRAG retrieval and reasoning -> evaluation loop',
+        researchEvalTitle: 'Evaluation Metrics',
+        researchEvalDesc: 'Answer accuracy, reasoning explainability, interdisciplinary association quality',
+        researchPlanTitle: 'Stage Plan',
+        researchPlanDesc: 'Data and graph / system experiments / evaluation and thesis writing',
         quickActions: 'Quick Actions',
-        qaUploadDocsBtn: '📤 Upload Documents',
-        qaViewGraphBtn: '🕸️ View Graph',
-        qaQueryBtn: '🤖 Query',
-        qaRefreshBtn: '🔄 Refresh',
+        qaUploadDocsBtn: 'Upload Documents',
+        qaViewGraphBtn: 'View Graph',
+        qaQueryBtn: 'Start Q&A',
+        qaRefreshBtn: 'Refresh Data',
         uploadDocuments: 'Upload Documents',
-        uploadDragTitle: 'Drag & Drop Files Here',
+        uploadDragTitle: 'Drag and drop files here',
         uploadDragDesc: 'or click to browse files',
         uploadSupports: 'Currently supports: .txt, .md, .json, .pdf, .docx, .doc',
-        uploadSampleHeader: '📄 Sample Format (.json):',
+        uploadSampleHeader: 'Sample Format (.json):',
         uploadBtn: 'Upload Files',
         clearUploadBtn: 'Clear',
         availableDatasets: 'Available Datasets',
-        knowledgeTreeTitle: 'Knowledge Tree Visualization',
+        knowledgeTreeTitle: 'Knowledge Graph Visualization',
+        graphHintText: 'Tip: Dark graph panels emphasize interpretable paths and relation structures.',
         labelDataset: 'Dataset:',
         selectDatasetPlaceholder: 'Select a dataset...',
-        queryPanelTitle: 'Query Panel',
-        labelQuery: 'Query:',
-        askBtn: 'Ask Question',
+        queryPanelTitle: 'Research Q&A Panel',
+        labelQuery: 'Research Question:',
+        qaHintText: 'Example: What are the shared and different application paths of LLM technology across disciplines?',
+        questionPlaceholder: 'Enter a research question for interdisciplinary knowledge discovery...',
+        askBtn: 'Start Q&A',
         answerTitle: 'Answer:',
+        uploadProgress: (p) => `Uploading... ${p}%`,
+        uploadCompleted: 'Upload completed!',
+        uploadFailed: 'Upload failed: ',
+        loadDatasetFailed: 'Failed to load datasets',
+        noDatasets: 'No datasets available. Upload files to start graph construction.',
+        schemaTag: 'Schema',
+        schemaCustom: 'custom',
+        schemaDefault: 'default',
+        datasetStatusMap: {
+            ready: 'ready',
+            constructing: 'constructing',
+            reconstructing: 'reconstructing',
+            needs_construction: 'needs construction',
+            error: 'error'
+        },
+        btnConstruct: 'Construct',
+        btnReconstruct: 'Reconstruct',
+        btnUploadSchema: 'Upload Schema',
+        btnDelete: 'Delete',
+        msgUploadingSchema: (name) => `Uploading schema for "${name}"...`,
+        msgSchemaUploaded: 'Schema uploaded successfully!',
+        msgSchemaUploadFailed: 'Schema upload failed: ',
+        msgStartConstruct: 'Starting graph construction...',
+        msgConstructProgress: (idx, msg) => `[Construct ${idx}] ${msg}`,
+        msgConstructCompleted: 'Graph construction completed!',
+        msgConstructError: (msg) => `Construction error: ${msg}`,
+        msgConstructFailed: 'Graph construction failed: ',
+        confirmReconstruct: (name) => `Are you sure you want to reconstruct "${name}"? Existing graph and cache files will be removed.`,
+        msgStartReconstruct: 'Reconstructing graph...',
+        msgReconstructProgress: (idx, msg) => `[Reconstruct ${idx}] ${msg}`,
+        msgReconstructCompleted: 'Graph reconstruction completed!',
+        msgReconstructError: (msg) => `Reconstruction error: ${msg}`,
+        msgReconstructFailed: 'Graph reconstruction failed: ',
+        confirmDelete: (name) => `Are you sure you want to delete dataset "${name}"? This action cannot be undone.`,
+        msgDeletingDataset: 'Deleting dataset...',
+        msgDatasetDeleted: (name) => `Dataset "${name}" deleted successfully!`,
+        msgDeleteFailed: 'Dataset deletion failed: ',
+        msgLoadGraphFailed: 'Failed to load graph data',
+        msgQuestionFailed: 'Failed to process question: ',
+        previewPrefix: 'Preview: ',
         decomposeStart: 'Starting to decompose your question into sub-questions...',
         decomposeSummary: (t) => `Decomposition complete. Total sub-questions: ${t}`,
         subQuestion: (i,t,q) => `Sub-question ${i}/${t}: ${q}`,
@@ -42,8 +97,28 @@ const i18n = {
         ircotStep: (s,max,thought) => `IRCoT Step ${s}/${max}: ${thought}`,
         retrievalProgress: (found,cand) => `Retrieval progress: ${found} relevant nodes from ${cand} candidates.`,
         answerStart: 'Synthesizing the final answer...',
-        qaCompleted: 'QA process completed!',
-        completedBadge: '✔️ Completed',
+        qaCompleted: 'Q&A completed',
+        completedBadge: 'Completed',
+        retrievalStatsTitle: 'Retrieval Statistics',
+        retrievalSubQuestions: 'Sub-questions:',
+        retrievalTriplesTotal: 'Retrieved triples (sum):',
+        retrievalChunks: 'Relevant chunks:',
+        questionDecompositionTitle: 'Question Decomposition',
+        retrievedTriplesLabel: 'Retrieved triples:',
+        triplesLabel: 'Triples',
+        chunksLabel: 'Chunks',
+        timeLabel: 'Time',
+        noSubQuestionData: 'No sub-question data',
+        subgraphTitle: 'Subgraph Visualization',
+        retrievedTriplesSummary: (n) => `Retrieved ${n} related triples`,
+        moreTriples: (n) => `...and ${n} more`,
+        showLess: 'Show less',
+        echartsNotLoaded: 'ECharts library not loaded',
+        echartsInitError: 'Error initializing ECharts: ',
+        noEntityRelationships: 'No entity relationships found',
+        chartRenderError: 'Chart rendering error: ',
+        nodeTypeLabel: 'Type',
+        relationLabel: 'Relation',
         datasetDocCountLabel: (count) => count === 1 ? ' (1 document)' : ` (${count} documents)`,
         uploadSuccessMessage: (name, count) => {
             const friendlyName = (name || '').replace(/_/g, ' ').trim() || name || 'dataset';
@@ -54,16 +129,28 @@ const i18n = {
         }
     },
     zh: {
-        processing: '正在处理你的问题…',
+        processing: '正在处理你的研究问题...',
         pleaseSelectAndEnter: '请选择数据集并输入问题',
-        subtitle: '✨ 面向图检索增强复杂推理的统一式智能体 ✨',
-        tabs: { dashboard: '📊 仪表盘', upload: '📤 数据上传', graph: '🕸️ 图谱可视化', qa: '🤖 问答接口' },
+        subtitle: '面向跨学科知识发现的图检索增强生成研究平台',
+        tabs: { dashboard: '概览', upload: '数据上传', graph: '图谱可视化', qa: '研究问答' },
         systemOverview: '系统概览',
+        statDatasetsLabel: '数据集数量',
+        statGraphsLabel: '已构建图谱',
+        statQuestionsLabel: '问答次数',
+        systemStatusLabel: '系统状态',
+        systemStatusConnected: '已连接',
+        researchInsightTitle: '研究导向',
+        researchRouteTitle: '研究路线',
+        researchRouteDesc: '知识图谱构建 -> GraphRAG 检索推理 -> 评估闭环',
+        researchEvalTitle: '评估指标',
+        researchEvalDesc: '答案准确性、推理可解释性、跨学科关联质量',
+        researchPlanTitle: '阶段进度',
+        researchPlanDesc: '数据与图谱 / 系统实验 / 评估与论文写作',
         quickActions: '快捷操作',
-        qaUploadDocsBtn: '📤 上传文档',
-        qaViewGraphBtn: '🕸️ 查看图谱',
-        qaQueryBtn: '🤖 发起查询',
-        qaRefreshBtn: '🔄 刷新',
+        qaUploadDocsBtn: '上传文档',
+        qaViewGraphBtn: '查看图谱',
+        qaQueryBtn: '发起问答',
+        qaRefreshBtn: '刷新数据',
         uploadDocuments: '上传文档',
         uploadDragTitle: '拖拽文件到这里',
         uploadDragDesc: '或点击选择文件',
@@ -72,13 +159,56 @@ const i18n = {
         uploadBtn: '开始上传',
         clearUploadBtn: '清空',
         availableDatasets: '可用数据集',
-        knowledgeTreeTitle: '知识树可视化',
+        knowledgeTreeTitle: '知识图谱可视化',
+        graphHintText: '提示：深色图谱面板用于强化可解释路径，支持节点关系与子图结构观察。',
         labelDataset: '数据集：',
         selectDatasetPlaceholder: '请选择数据集…',
-        queryPanelTitle: '查询面板',
-        labelQuery: '查询：',
-        askBtn: '发起提问',
+        queryPanelTitle: '研究问答面板',
+        labelQuery: '研究问题：',
+        qaHintText: '示例：大语言模型技术在不同学科中的应用路径有哪些共性与差异？',
+        questionPlaceholder: '请输入研究问题，支持复杂推理与跨学科关联检索...',
+        askBtn: '开始问答',
         answerTitle: '答案：',
+        uploadProgress: (p) => `上传中... ${p}%`,
+        uploadCompleted: '上传完成！',
+        uploadFailed: '上传失败：',
+        loadDatasetFailed: '加载数据集失败',
+        noDatasets: '暂无可用数据集，请先上传文件。',
+        schemaTag: 'Schema',
+        schemaCustom: '自定义',
+        schemaDefault: '默认',
+        datasetStatusMap: {
+            ready: '就绪',
+            constructing: '构建中',
+            reconstructing: '重建中',
+            needs_construction: '待构建',
+            error: '错误'
+        },
+        btnConstruct: '构建图谱',
+        btnReconstruct: '重建图谱',
+        btnUploadSchema: '上传 Schema',
+        btnDelete: '删除',
+        msgUploadingSchema: (name) => `正在为“${name}”上传 Schema...`,
+        msgSchemaUploaded: 'Schema 上传成功！',
+        msgSchemaUploadFailed: 'Schema 上传失败：',
+        msgStartConstruct: '开始构建图谱...',
+        msgConstructProgress: (idx, msg) => `【构建 ${idx}】${msg}`,
+        msgConstructCompleted: '图谱构建完成！',
+        msgConstructError: (msg) => `构建错误：${msg}`,
+        msgConstructFailed: '图谱构建失败：',
+        confirmReconstruct: (name) => `确认重建数据集“${name}”的图谱吗？这将删除已有图谱及缓存文件。`,
+        msgStartReconstruct: '开始重建图谱...',
+        msgReconstructProgress: (idx, msg) => `【重建 ${idx}】${msg}`,
+        msgReconstructCompleted: '图谱重建完成！',
+        msgReconstructError: (msg) => `重建错误：${msg}`,
+        msgReconstructFailed: '图谱重建失败：',
+        confirmDelete: (name) => `确认删除数据集“${name}”吗？该操作不可恢复。`,
+        msgDeletingDataset: '正在删除数据集...',
+        msgDatasetDeleted: (name) => `数据集“${name}”删除成功！`,
+        msgDeleteFailed: '数据集删除失败：',
+        msgLoadGraphFailed: '图谱数据加载失败',
+        msgQuestionFailed: '问题处理失败：',
+        previewPrefix: '预览：',
         decomposeStart: '开始将你的问题分解为子问题…',
         decomposeSummary: (t) => `分解完成。子问题总数：${t}`,
         subQuestion: (i,t,q) => `子问题 ${i}/${t}：${q}`,
@@ -86,8 +216,28 @@ const i18n = {
         ircotStep: (s,max,thought) => `IRCoT 步骤 ${s}/${max}：${thought}`,
         retrievalProgress: (found,cand) => `检索进度：在 ${cand} 个候选中找到 ${found} 个相关节点。`,
         answerStart: '正在综合生成最终答案…',
-        qaCompleted: '问答流程完成！',
-        completedBadge: '✔️ 已完成',
+        qaCompleted: '问答完成',
+        completedBadge: '已完成',
+        retrievalStatsTitle: '检索统计',
+        retrievalSubQuestions: '子问题数量：',
+        retrievalTriplesTotal: '检索三元组总数：',
+        retrievalChunks: '相关文本片段：',
+        questionDecompositionTitle: '问题分解',
+        retrievedTriplesLabel: '检索三元组：',
+        triplesLabel: '三元组',
+        chunksLabel: '片段',
+        timeLabel: '耗时',
+        noSubQuestionData: '暂无子问题数据',
+        subgraphTitle: '子图可视化',
+        retrievedTriplesSummary: (n) => `共检索到 ${n} 条相关三元组`,
+        moreTriples: (n) => `...还有 ${n} 条`,
+        showLess: '收起',
+        echartsNotLoaded: 'ECharts 组件未加载',
+        echartsInitError: 'ECharts 初始化失败：',
+        noEntityRelationships: '未发现可展示的实体关系',
+        chartRenderError: '图表渲染错误：',
+        nodeTypeLabel: '类型',
+        relationLabel: '关系',
         datasetDocCountLabel: (count) => count === 1 ? '（1篇文档）' : `（共${count}篇文档）`,
         uploadSuccessMessage: (name, count) => {
             const friendlyName = (name || '').replace(/_/g, ' ').trim() || name || '数据集';
@@ -109,6 +259,18 @@ function refreshUITexts() {
     const tabQA = document.getElementById('tabQA'); if (tabQA) tabQA.textContent = t.tabs.qa;
     // Dashboard
     const sysTitle = document.getElementById('systemOverviewTitle'); if (sysTitle) sysTitle.textContent = t.systemOverview;
+    const statDatasetsLabel = document.getElementById('statDatasetsLabel'); if (statDatasetsLabel) statDatasetsLabel.textContent = t.statDatasetsLabel;
+    const statGraphsLabel = document.getElementById('statGraphsLabel'); if (statGraphsLabel) statGraphsLabel.textContent = t.statGraphsLabel;
+    const statQuestionsLabel = document.getElementById('statQuestionsLabel'); if (statQuestionsLabel) statQuestionsLabel.textContent = t.statQuestionsLabel;
+    const systemStatusLabel = document.getElementById('systemStatusLabel'); if (systemStatusLabel) systemStatusLabel.textContent = t.systemStatusLabel;
+    const systemStatusBadge = document.getElementById('systemStatusBadge'); if (systemStatusBadge) systemStatusBadge.textContent = t.systemStatusConnected;
+    const researchInsightTitle = document.getElementById('researchInsightTitle'); if (researchInsightTitle) researchInsightTitle.textContent = t.researchInsightTitle;
+    const researchRouteTitle = document.getElementById('researchRouteTitle'); if (researchRouteTitle) researchRouteTitle.textContent = t.researchRouteTitle;
+    const researchRouteDesc = document.getElementById('researchRouteDesc'); if (researchRouteDesc) researchRouteDesc.textContent = t.researchRouteDesc;
+    const researchEvalTitle = document.getElementById('researchEvalTitle'); if (researchEvalTitle) researchEvalTitle.textContent = t.researchEvalTitle;
+    const researchEvalDesc = document.getElementById('researchEvalDesc'); if (researchEvalDesc) researchEvalDesc.textContent = t.researchEvalDesc;
+    const researchPlanTitle = document.getElementById('researchPlanTitle'); if (researchPlanTitle) researchPlanTitle.textContent = t.researchPlanTitle;
+    const researchPlanDesc = document.getElementById('researchPlanDesc'); if (researchPlanDesc) researchPlanDesc.textContent = t.researchPlanDesc;
     const qaTitle = document.getElementById('quickActionsTitle'); if (qaTitle) qaTitle.textContent = t.quickActions;
     const qaUploadDocsBtn = document.getElementById('qaUploadDocsBtn'); if (qaUploadDocsBtn) qaUploadDocsBtn.textContent = t.qaUploadDocsBtn;
     const qaViewGraphBtn = document.getElementById('qaViewGraphBtn'); if (qaViewGraphBtn) qaViewGraphBtn.textContent = t.qaViewGraphBtn;
@@ -125,6 +287,7 @@ function refreshUITexts() {
     const datasetsTitle = document.getElementById('availableDatasetsTitle'); if (datasetsTitle) datasetsTitle.textContent = t.availableDatasets;
     // Graph
     const knowledgeTreeTitle = document.getElementById('knowledgeTreeTitle'); if (knowledgeTreeTitle) knowledgeTreeTitle.textContent = t.knowledgeTreeTitle;
+    const graphHintText = document.getElementById('graphHintText'); if (graphHintText) graphHintText.textContent = t.graphHintText;
     const labelGraphDataset = document.getElementById('labelGraphDataset'); if (labelGraphDataset) labelGraphDataset.textContent = t.labelDataset;
     const graphSelect = document.getElementById('graphDataset'); if (graphSelect) graphSelect.options[0].text = t.selectDatasetPlaceholder;
     // QA
@@ -132,6 +295,8 @@ function refreshUITexts() {
     const labelQADataset = document.getElementById('labelQADataset'); if (labelQADataset) labelQADataset.textContent = t.labelDataset;
     const qaSelect = document.getElementById('qaDataset'); if (qaSelect) qaSelect.options[0].text = t.selectDatasetPlaceholder;
     const labelQuery = document.getElementById('labelQuery'); if (labelQuery) labelQuery.textContent = t.labelQuery;
+    const qaHintText = document.getElementById('qaHintText'); if (qaHintText) qaHintText.textContent = t.qaHintText;
+    const questionInput = document.getElementById('questionInput'); if (questionInput) questionInput.placeholder = t.questionPlaceholder;
     const askBtn = document.getElementById('askBtn'); if (askBtn) askBtn.textContent = t.askBtn;
     const answerTitle = document.getElementById('answerTitle'); if (answerTitle) answerTitle.textContent = t.answerTitle;
     // Processing text & badge (if visible)
@@ -198,10 +363,11 @@ function updateLangButtons() {
     zhBtn.classList.toggle('active', currentLang === 'zh');
 }
 
-function switchTab(tabName) {
+function switchTab(tabName, tabEl) {
     // Update tab buttons
     document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
-    event.target.classList.add('active');
+    const targetTab = tabEl || document.querySelector(`[onclick*="switchTab('${tabName}'"]`);
+    if (targetTab) targetTab.classList.add('active');
 
     // Update tab content
     document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
@@ -318,7 +484,7 @@ async function uploadFiles() {
             progress += Math.random() * 20;
             if (progress > 90) progress = 90;
             progressFill.style.width = progress + '%';
-            progressText.textContent = `Uploading... ${Math.round(progress)}%`;
+            progressText.textContent = (i18n[currentLang] || i18n.en).uploadProgress(Math.round(progress));
         }, 500);
 
         const response = await axios.post(`${API_BASE}/api/upload`, formData, {
@@ -327,7 +493,7 @@ async function uploadFiles() {
 
         clearInterval(progressInterval);
         progressFill.style.width = '100%';
-        progressText.textContent = 'Upload completed!';
+        progressText.textContent = (i18n[currentLang] || i18n.en).uploadCompleted;
 
         const uploadData = response?.data || {};
         const datasetName = uploadData.dataset_name;
@@ -351,7 +517,8 @@ async function uploadFiles() {
 
     } catch (error) {
         console.error('Upload failed:', error);
-        showMessage('Upload failed: ' + (error.response?.data?.detail || error.message), 'error');
+        const t = i18n[currentLang] || i18n.en;
+        showMessage(t.uploadFailed + (error.response?.data?.detail || error.message), 'error');
         progressSection.classList.add('hidden');
     } finally {
         document.getElementById('uploadBtn').disabled = false;
@@ -375,15 +542,16 @@ async function loadDatasets() {
         updateStats();
     } catch (error) {
         console.error('Failed to load datasets:', error);
-        showMessage('Failed to load datasets', 'error');
+        showMessage((i18n[currentLang] || i18n.en).loadDatasetFailed, 'error');
     }
 }
 
 function displayDatasets() {
+    const t = i18n[currentLang] || i18n.en;
     const container = document.getElementById('datasetsList');
     if (!container) return;
     if (datasets.length === 0) {
-        container.innerHTML = '<p style="color: rgba(255,255,255,0.6);">No datasets available. Upload some files to get started.</p>';
+        container.innerHTML = `<p style="color: var(--muted);">${t.noDatasets}</p>`;
         return;
     }
 
@@ -391,27 +559,27 @@ function displayDatasets() {
         <div class="file-item">
             <div>
                 <strong>${formatDatasetDisplayName(dataset)}</strong>
-                <span style="color: rgba(255,255,255,0.6);"> (${dataset.type})</span>
-                ${dataset.type !== 'demo' ? `<span style="margin-left:8px; font-size:12px; color:${dataset.has_custom_schema ? '#228B22' : 'rgba(255,255,255,0.6)'}; font-weight:600;">Schema: ${dataset.has_custom_schema ? 'custom' : 'default'}</span>` : ''}
+                <span style="color: var(--muted);"> (${dataset.type})</span>
+                ${dataset.type !== 'demo' ? `<span style="margin-left:8px; font-size:12px; color:${dataset.has_custom_schema ? '#1f8f55' : 'var(--muted)'}; font-weight:600;">${t.schemaTag}: ${dataset.has_custom_schema ? t.schemaCustom : t.schemaDefault}</span>` : ''}
             </div>
             <div class="dataset-actions">
-                <span class="status-badge status-${dataset.status === 'ready' ? 'ready' : dataset.status === 'constructing' ? 'processing' : 'error'}">
-                    ${dataset.status}
+                <span class="status-badge status-${dataset.status === 'ready' ? 'ready' : dataset.status === 'constructing' || dataset.status === 'reconstructing' ? 'processing' : 'error'}">
+                    ${t.datasetStatusMap[dataset.status] || dataset.status}
                 </span>
                 ${dataset.status === 'needs_construction' ? 
-                    `<button class="btn btn-primary" onclick="constructGraph('${dataset.name}')">Construct</button>` : 
+                    `<button class="btn btn-primary" onclick="constructGraph('${dataset.name}')">${t.btnConstruct}</button>` : 
                     ''
                 }
                 ${dataset.status === 'ready' ? 
-                    `<button class="btn btn-secondary" onclick="reconstructGraph('${dataset.name}')" title="Reconstruct Graph">🔄 Reconstruct</button>` : 
+                    `<button class="btn btn-secondary" onclick="reconstructGraph('${dataset.name}')" title="${t.btnReconstruct}">${t.btnReconstruct}</button>` : 
                     ''
                 }
                 ${dataset.type !== 'demo' ? 
-                    `<button class="btn" onclick="triggerSchemaUpload('${dataset.name}')" title="Upload custom schema">📚 Upload Schema</button>` : 
+                    `<button class="btn" onclick="triggerSchemaUpload('${dataset.name}')" title="${t.btnUploadSchema}">${t.btnUploadSchema}</button>` : 
                     ''
                 }
                 ${dataset.type !== 'demo' ? 
-                    `<button class="btn btn-danger" onclick="deleteDataset('${dataset.name}')" title="Delete Dataset">🗑️ Delete</button>` : 
+                    `<button class="btn btn-danger" onclick="deleteDataset('${dataset.name}')" title="${t.btnDelete}">${t.btnDelete}</button>` : 
                     ''
                 }
             </div>
@@ -434,17 +602,19 @@ function ensureSchemaFileInput() {
             const datasetName = e.target.dataset.datasetName;
             if (!file || !datasetName) return;
             try {
-                showMessage(`Uploading schema for "${datasetName}"...`, 'info');
+                const t = i18n[currentLang] || i18n.en;
+                showMessage(t.msgUploadingSchema(datasetName), 'info');
                 const fd = new FormData();
                 fd.append('schema_file', file);
                 await axios.post(`${API_BASE}/api/datasets/${datasetName}/schema`, fd, {
                     headers: { 'Content-Type': 'multipart/form-data' }
                 });
-                showMessage('Schema uploaded successfully!', 'success');
+                showMessage(t.msgSchemaUploaded, 'success');
                 await loadDatasets();
             } catch (err) {
                 console.error('Schema upload failed:', err);
-                showMessage('Schema upload failed: ' + (err.response?.data?.detail || err.message), 'error');
+                const t = i18n[currentLang] || i18n.en;
+                showMessage(t.msgSchemaUploadFailed + (err.response?.data?.detail || err.message), 'error');
             } finally {
                 e.target.value = '';
                 e.target.dataset.datasetName = '';
@@ -473,7 +643,8 @@ async function constructGraph(datasetName) {
     }
 
     try {
-        showMessage('Starting graph construction...', 'info');
+        const t = i18n[currentLang] || i18n.en;
+        showMessage(t.msgStartConstruct, 'info');
 
         // 建立WebSocket连接来接收实时进展
         const wsProto = window.location.protocol === 'https:' ? 'wss' : 'ws';
@@ -489,14 +660,14 @@ async function constructGraph(datasetName) {
                 const data = JSON.parse(event.data);
                 if (data.type === 'progress') {
                     progressMessages.push(data.message);
-                    showMessage(`[Construct ${progressMessages.length}] ${data.message}`, 'info');
+                    showMessage(t.msgConstructProgress(progressMessages.length, data.message), 'info');
                 } else if (data.type === 'complete') {
-                    showMessage('Graph construction completed!', 'success');
+                    showMessage(t.msgConstructCompleted, 'success');
                     // refresh datasets immediately to reflect ready status
                     refreshData();
                     ws.close();
                 } else if (data.type === 'error') {
-                    showMessage(`Construction error: ${data.message}`, 'error');
+                    showMessage(t.msgConstructError(data.message), 'error');
                     refreshData();
                     ws.close();
                 }
@@ -525,7 +696,7 @@ async function constructGraph(datasetName) {
             if (ws.readyState === WebSocket.OPEN) {
                 ws.close();
                 if (progressMessages.length === 0) {
-                    showMessage('Graph construction completed!', 'success');
+                    showMessage(t.msgConstructCompleted, 'success');
                 }
             }
         }, 30000); // 30s timeout
@@ -533,12 +704,14 @@ async function constructGraph(datasetName) {
         // 不再立即 refreshData，等 WebSocket complete/error 后再刷新
     } catch (error) {
         console.error('Construction failed:', error);
-        showMessage('Graph construction failed: ' + (error.response?.data?.detail || error.message), 'error');
+        const t = i18n[currentLang] || i18n.en;
+        showMessage(t.msgConstructFailed + (error.response?.data?.detail || error.message), 'error');
     }
 }
 
 async function reconstructGraph(datasetName) {
-    if (!confirm(`Are you sure you want to reconstruct the graph for dataset "${datasetName}"? This will delete the existing graph and cache files.`)) {
+    const t = i18n[currentLang] || i18n.en;
+    if (!confirm(t.confirmReconstruct(datasetName))) {
         return;
     }
 
@@ -553,7 +726,7 @@ async function reconstructGraph(datasetName) {
     }
 
     try {
-        showMessage('Reconstructing graph...', 'info');
+        showMessage(t.msgStartReconstruct, 'info');
 
         // Open WebSocket for real-time progress
         const wsProto = window.location.protocol === 'https:' ? 'wss' : 'ws';
@@ -569,14 +742,14 @@ async function reconstructGraph(datasetName) {
                 const data = JSON.parse(event.data);
                 if (data.type === 'progress') {
                     progressMessages.push(data.message);
-                    showMessage(`[Reconstruct ${progressMessages.length}] ${data.message}`, 'info');
+                    showMessage(t.msgReconstructProgress(progressMessages.length, data.message), 'info');
                 } else if (data.type === 'complete') {
-                    showMessage('Graph reconstruction completed!', 'success');
+                    showMessage(t.msgReconstructCompleted, 'success');
                     // refresh datasets immediately to reflect ready status
                     refreshData();
                     ws.close();
                 } else if (data.type === 'error') {
-                    showMessage(`Reconstruction error: ${data.message}`, 'error');
+                    showMessage(t.msgReconstructError(data.message), 'error');
                     refreshData();
                     ws.close();
                 }
@@ -602,7 +775,7 @@ async function reconstructGraph(datasetName) {
             if (ws.readyState === WebSocket.OPEN) {
                 ws.close();
                 if (progressMessages.length === 0) {
-                    showMessage('Graph reconstruction completed!', 'success');
+                    showMessage(t.msgReconstructCompleted, 'success');
                 }
             }
         }, 30000); // 30s timeout
@@ -610,19 +783,20 @@ async function reconstructGraph(datasetName) {
         // 不再立即 refreshData，等 WebSocket complete/error 后再刷新
     } catch (error) {
         console.error('Reconstruction failed:', error);
-        showMessage('Graph reconstruction failed: ' + (error.response?.data?.detail || error.message), 'error');
+        showMessage(t.msgReconstructFailed + (error.response?.data?.detail || error.message), 'error');
     }
 }
 
 async function deleteDataset(datasetName) {
-    if (!confirm(`Are you sure you want to delete dataset "${datasetName}"? This action will remove all related files and cannot be undone.`)) {
+    const t = i18n[currentLang] || i18n.en;
+    if (!confirm(t.confirmDelete(datasetName))) {
         return;
     }
 
     try {
-        showMessage('Deleting dataset...', 'info');
+        showMessage(t.msgDeletingDataset, 'info');
         const response = await axios.delete(`${API_BASE}/api/datasets/${datasetName}`);
-        showMessage(`Dataset "${datasetName}" deleted successfully!`, 'success');
+        showMessage(t.msgDatasetDeleted(datasetName), 'success');
         refreshData();
 
         // If the deleted dataset was selected, clear selections
@@ -636,7 +810,7 @@ async function deleteDataset(datasetName) {
         }
     } catch (error) {
         console.error('Deletion failed:', error);
-        showMessage('Dataset deletion failed: ' + (error.response?.data?.detail || error.message), 'error');
+        showMessage(t.msgDeleteFailed + (error.response?.data?.detail || error.message), 'error');
     }
 }
 
@@ -673,12 +847,13 @@ async function loadGraphData() {
         renderGraph(graphData);
     } catch (error) {
         console.error('Failed to load graph data:', error);
-        showMessage('Failed to load graph data', 'error');
+        showMessage((i18n[currentLang] || i18n.en).msgLoadGraphFailed, 'error');
     }
 }
 
 function renderGraph(data) {
     const chartContainer = document.getElementById('graphChart');
+    const t = i18n[currentLang] || i18n.en;
 
     if (graphChart) {
         graphChart.dispose();
@@ -687,7 +862,7 @@ function renderGraph(data) {
     graphChart = echarts.init(chartContainer);
 
     const option = {
-        backgroundColor: 'transparent',
+        backgroundColor: '#13233a',
         // title: {
         //     text: 'Knowledge Graph',
         //     left: 'center',
@@ -695,17 +870,20 @@ function renderGraph(data) {
         // },
         tooltip: {
             trigger: 'item',
-            backgroundColor: 'rgba(0, 0, 0, 0.8)',
-            textStyle: { color: '#ffffff' },
+            backgroundColor: 'rgba(10, 18, 30, 0.92)',
+            borderColor: 'rgba(125, 170, 228, 0.45)',
+            borderWidth: 1,
+            textStyle: { color: '#f4f8ff' },
             formatter: function (params) {
                 if (params.dataType === 'node') {
                     const d = params.data || {};
                     let name = (d.name || '').toString().replace(/\s+/g,' ').trim();
                     if (name.length > 20) name = name.slice(0,20) + '...';
                     const category = d.category || d.type || '';
-                    return name ? name : category || 'node';
+                    return `${name || 'node'}<br/>${t.nodeTypeLabel}: ${category || 'entity'}`;
                 } else if (params.dataType === 'edge') {
-                    return params.data && params.data.name ? params.data.name : '';
+                    const rel = params.data && params.data.name ? params.data.name : '';
+                    return `${t.relationLabel}: ${rel}`;
                 }
                 return '';
             }
@@ -713,7 +891,7 @@ function renderGraph(data) {
         legend: {
             type: 'scroll',
             bottom: 10,
-            textStyle: { color: 'rgba(255, 255, 255, 0.85)' },
+            textStyle: { color: '#dce9ff' },
             data: (data.categories && data.categories.map(function(c){return c.name;})) || []
         },
         series: [{
@@ -725,7 +903,9 @@ function renderGraph(data) {
             roam: true,
             label: {
                 show: true,
-                color: 'rgba(255, 255, 255, 0.9)',
+                color: '#e8f3ff',
+                textShadowColor: 'rgba(0,0,0,0.55)',
+                textShadowBlur: 4,
                 formatter: function(p){
                     const d = p.data || {};
                     let name = (d.name || '').toString().replace(/\s+/g,' ').trim();
@@ -739,8 +919,9 @@ function renderGraph(data) {
                 edgeLength: 120
             },
             lineStyle: {
-                opacity: 0.6,
-                color: 'rgba(255, 255, 255, 0.4)'
+                opacity: 0.85,
+                width: 1.6,
+                color: 'rgba(144, 185, 236, 0.78)'
             }
         }]
     };
@@ -792,13 +973,13 @@ async function askQuestion() {
                             const msg = `【子问题 ${data.index}/${data.total}】${q}｜三元组：${data.triples_count || 0}｜片段：${data.chunks_count || 0}`;
                             showMessage(msg, 'info');
                             if (Array.isArray(data.triples_preview) && data.triples_preview.length) {
-                                showMessage('预览：' + data.triples_preview.slice(0,3).join(' | '), 'info');
+                                showMessage((i18n[currentLang] || i18n.en).previewPrefix + data.triples_preview.slice(0,3).join(' | '), 'info');
                             }
                         } else {
                             const msg = `[Sub ${data.index}/${data.total}] ${q} | Triples: ${data.triples_count || 0} | Chunks: ${data.chunks_count || 0}`;
                             showMessage(msg, 'info');
                             if (Array.isArray(data.triples_preview) && data.triples_preview.length) {
-                                showMessage('Preview: ' + data.triples_preview.slice(0,3).join(' | '), 'info');
+                                showMessage((i18n[currentLang] || i18n.en).previewPrefix + data.triples_preview.slice(0,3).join(' | '), 'info');
                             }
                         }
                     } else if (data.stage === 'ircot') {
@@ -834,7 +1015,7 @@ async function askQuestion() {
 
     } catch (error) {
         console.error('Question failed:', error);
-        showMessage('Failed to process question: ' + (error.response?.data?.detail || error.message), 'error');
+        showMessage((i18n[currentLang] || i18n.en).msgQuestionFailed + (error.response?.data?.detail || error.message), 'error');
     } finally {
         // Delay hiding the loader briefly when completed so the bright message is visible
         const hide = () => loading.classList.remove('show');
@@ -864,6 +1045,7 @@ function displayAnswer(result) {
 
 function displayRetrievalDetails(result) {
     console.log('displayRetrievalDetails called with:', result);
+    const t = i18n[currentLang] || i18n.en;
 
     // Helper: deduplicate triples array of strings '(s, r, o)' retaining order
     function dedupTriples(arr) {
@@ -910,25 +1092,25 @@ function displayRetrievalDetails(result) {
 
     let detailsHtml = `
         <div class="retrieval-summary">
-    <h4>🔍 Retrieval Stats</h4>
+    <h4>${t.retrievalStatsTitle}</h4>
             <div class="stats-grid">
                 <div class="stat-item">
-        <span class="stat-label">Sub-questions:</span>
+        <span class="stat-label">${t.retrievalSubQuestions}</span>
                     <span class="stat-value">${result.sub_questions?.length || 0}</span>
                 </div>
                 <div class="stat-item">
-        <span class="stat-label">Retrieved Triples (Sum):</span>
+        <span class="stat-label">${t.retrievalTriplesTotal}</span>
                     <span class="stat-value">${subQuestionTriplesTotal}</span>
                 </div>
                 <div class="stat-item">
-        <span class="stat-label">Relevant Chunks:</span>
+        <span class="stat-label">${t.retrievalChunks}</span>
                     <span class="stat-value">${result.retrieved_chunks?.length || 0}</span>
                 </div>
             </div>
         </div>
         
         <div class="subquestions-section">
-    <h4>📝 Question Decomposition</h4>
+    <h4>${t.questionDecompositionTitle}</h4>
             <div class="subquestions-list">
     `;
 
@@ -945,7 +1127,7 @@ function displayRetrievalDetails(result) {
             if (stepTriples.length > 0) {
                 triplesHtml = `
                     <div class="triples-preview">
-                        <strong>Retrieved Triples:</strong>
+                        <strong>${t.retrievedTriplesLabel}</strong>
                         <ul>
                             ${visibleTriples.map(triple => `<li>${triple}</li>`).join('')}
                         </ul>
@@ -957,7 +1139,7 @@ function displayRetrievalDetails(result) {
                             <span class="more-indicator" 
                                   style="cursor: pointer; text-decoration: underline; color: #3b82f6;" 
                                   onclick="toggleHiddenTriples('hidden-triples-${index}', this)">
-                                ...and ${hiddenTriples.length} more
+                                ${t.moreTriples(hiddenTriples.length)}
                             </span>
                         ` : ''}
                     </div>
@@ -973,16 +1155,16 @@ function displayRetrievalDetails(result) {
                         <span class="subquestion-text">${sq['sub-question'] || sq.question}</span>
                     </div>
                     <div class="subquestion-stats">
-                        <span>Triples: ${stepTriples.length}</span>
-                        <span>Chunks: ${step.chunks_count || 0}</span>
-                        <span>Time: ${(step.processing_time || 0).toFixed(2)}s</span>
+                        <span>${t.triplesLabel}: ${stepTriples.length}</span>
+                        <span>${t.chunksLabel}: ${step.chunks_count || 0}</span>
+                        <span>${t.timeLabel}: ${(step.processing_time || 0).toFixed(2)}s</span>
                     </div>
                     ${triplesHtml} 
                 </div>
             `;
         });
     } else {
-        detailsHtml += '<p class="no-data">No sub-question data</p>';
+        detailsHtml += `<p class="no-data">${t.noSubQuestionData}</p>`;
     }
 
     detailsHtml += `
@@ -990,12 +1172,12 @@ function displayRetrievalDetails(result) {
         </div>
         
         <div class="triples-section">
-            <h4>🔗 Subgraph Visualization</h4>
+            <h4>${t.subgraphTitle}</h4>
             <div class="triples-chart-container">
                 <div id="triplesChart" class="chart-container" style="height: 400px;"></div>
             </div>
             <div class="triples-summary">
-                <p>Retrieved <strong>${result.retrieved_triples?.length || 0}</strong> related triples</p>
+                <p>${t.retrievedTriplesSummary(result.retrieved_triples?.length || 0)}</p>
             </div>
         </div>
     `;
@@ -1019,6 +1201,7 @@ function displayRetrievalDetails(result) {
 function renderTriplesChart(triples) {
     console.log('renderTriplesChart called with:', triples.length, 'triples');
     console.log('First triple example:', triples[0]);
+    const t = i18n[currentLang] || i18n.en;
 
     // Helper: truncate by words. If more than 3 words, keep first 2 then ellipsis.
     function truncateWords(str){
@@ -1039,7 +1222,7 @@ function renderTriplesChart(triples) {
     // Check if ECharts is available
     if (typeof echarts === 'undefined') {
         console.error('ECharts library is not loaded!');
-        chartContainer.innerHTML = '<div style="color: red; text-align: center; padding: 50px;">ECharts library not loaded</div>';
+        chartContainer.innerHTML = `<div style="color: red; text-align: center; padding: 50px;">${t.echartsNotLoaded}</div>`;
         return;
     }
 
@@ -1061,7 +1244,7 @@ function renderTriplesChart(triples) {
         console.log('ECharts initialized successfully');
     } catch (e) {
         console.error('Error initializing ECharts:', e);
-        chartContainer.innerHTML = '<div style="color: red; text-align: center; padding: 50px;">Error initializing ECharts: ' + e.message + '</div>';
+        chartContainer.innerHTML = `<div style="color: red; text-align: center; padding: 50px;">${t.echartsInitError}${e.message}</div>`;
         return;
     }
 
@@ -1126,8 +1309,9 @@ function renderTriplesChart(triples) {
                 name: truncateWords(relation),
                 rawName: relation,
                 lineStyle: {
-                    color: '#6b73ff',
-                    width: 2
+                    color: '#8fc2ff',
+                    width: 2.2,
+                    opacity: 0.88
                 }
             });
         }
@@ -1140,7 +1324,7 @@ function renderTriplesChart(triples) {
     }));
 
     const option = {
-        backgroundColor: 'transparent',
+        backgroundColor: '#13233a',
         // title: {
         //     text: '检索三元组知识图谱',
         //     left: 'center',
@@ -1152,12 +1336,14 @@ function renderTriplesChart(triples) {
         // },
         tooltip: {
             trigger: 'item',
-            backgroundColor: 'rgba(0, 0, 0, 0.8)',
-            textStyle: { color: '#ffffff' },
+            backgroundColor: 'rgba(10, 18, 30, 0.92)',
+            borderColor: 'rgba(125, 170, 228, 0.45)',
+            borderWidth: 1,
+            textStyle: { color: '#f4f8ff' },
             formatter: function(params) {
                 if (params.dataType === 'node') {
                     const rawFull = (params.data.rawName || params.data.id || '').toString().replace(/\s+/g,' ').trim();
-                    return `<strong>${rawFull}</strong><br/>Type: ${params.data.category}`;
+                    return `<strong>${rawFull}</strong><br/>${t.nodeTypeLabel}: ${params.data.category}`;
                 } else if (params.dataType === 'edge') {
                     const fullRel = (params.data.rawName || params.data.name || '').toString().replace(/\s+/g,' ').trim();
                     return `<strong>${fullRel}</strong><br/>${params.data.source} → ${params.data.target}`;
@@ -1168,7 +1354,7 @@ function renderTriplesChart(triples) {
         legend: {
             type: 'scroll',
             bottom: 10,
-            textStyle: { color: 'rgba(255, 255, 255, 0.85)' },
+            textStyle: { color: '#dce9ff' },
             data: categoriesList.map(c => c.name)
         },
         series: [{
@@ -1182,7 +1368,9 @@ function renderTriplesChart(triples) {
             label: {
                 show: true,
                 position: 'right',
-                color: 'rgba(255, 255, 255, 0.9)',
+                color: '#e8f3ff',
+                textShadowColor: 'rgba(0,0,0,0.55)',
+                textShadowBlur: 4,
                 fontSize: 10,
                 formatter: function(p){
                     let name = (p.data && (p.data.rawName || p.data.name || p.data.id) || '').toString().replace(/\s+/g,' ').trim();
@@ -1196,12 +1384,12 @@ function renderTriplesChart(triples) {
                 layoutAnimation: true
             },
             lineStyle: {
-                opacity: 0.8,
+                opacity: 0.9,
                 curveness: 0.1
             },
             edgeLabel: {
                 show: true,
-                color: 'rgba(255,255,255,0.75)',
+                color: '#dbe9ff',
                 fontSize: 10,
                 formatter: function(p){
                     return truncateWords(p.data && (p.data.rawName || p.data.name) || '');
@@ -1220,7 +1408,7 @@ function renderTriplesChart(triples) {
 
     if (nodesList.length === 0) {
         console.warn('No nodes to display, showing empty message');
-        chartContainer.innerHTML = '<div style="color: #ffb347; text-align: center; padding: 50px;">No entity relationships found</div>';
+        chartContainer.innerHTML = `<div style="color: #ffb347; text-align: center; padding: 50px;">${t.noEntityRelationships}</div>`;
         return;
     }
 
@@ -1243,7 +1431,7 @@ function renderTriplesChart(triples) {
         console.log('Triples chart rendered successfully!');
     } catch (e) {
         console.error('Error setting chart option:', e);
-        chartContainer.innerHTML = '<div style="color: red; text-align: center; padding: 50px;">Chart rendering error: ' + e.message + '</div>';
+        chartContainer.innerHTML = `<div style="color: red; text-align: center; padding: 50px;">${t.chartRenderError}${e.message}</div>`;
     }
 }
 
@@ -1258,16 +1446,16 @@ function cleanEntityName(entityStr) {
 
 function getCategoryColor(category) {
     const colors = {
-        'person': '#6b73ff',
-        'organization': '#9bb5ff',
-        'location': '#a8c8ec',
-        'event': '#b8d4f0',
-        'object': '#e6f3ff',
-        'concept': '#4a90e2',
-        'attribute': '#6b73ff',
-        'entity': '#9bb5ff'
+        'person': '#74b9ff',
+        'organization': '#8ed1ff',
+        'location': '#6ee7b7',
+        'event': '#fbbf24',
+        'object': '#c4b5fd',
+        'concept': '#60a5fa',
+        'attribute': '#f472b6',
+        'entity': '#93c5fd'
     };
-    return colors[category] || '#9bb5ff';
+    return colors[category] || '#93c5fd';
 }
 
 function renderQueryChart(data) {
@@ -1343,17 +1531,18 @@ function showMessage(text, type = 'info', durationMs = 5000) {
 
 // 添加在 script.js 末尾
 window.toggleHiddenTriples = function(id, btn) {
+    const t = i18n[currentLang] || i18n.en;
     const hiddenList = document.getElementById(id);
     if (hiddenList) {
         // 切换显示状态
         if (hiddenList.style.display === 'none') {
             hiddenList.style.display = 'block';
-            btn.textContent = 'Show less'; // 点击后文案变成收起
+            btn.textContent = t.showLess;
         } else {
             hiddenList.style.display = 'none';
             // 恢复显示 "...and X more"
             const count = hiddenList.getElementsByTagName('li').length;
-            btn.textContent = `...and ${count} more`;
+            btn.textContent = t.moreTriples(count);
         }
     }
 }
