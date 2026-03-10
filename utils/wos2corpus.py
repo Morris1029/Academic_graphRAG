@@ -3,9 +3,10 @@ import os
 from typing import List, Dict, Any
 import hashlib
 
-INPUT_FILE = "D:/STUDY MO/Research/Data/Test-CNKI.txt"
+INPUT_FILE = "D:/STUDY MO/Research/Data/AIGC-EDU-test.txt"
 OUTPUT_DIR = "data/uploaded/wos_paper_dataset"
-OUTPUT_FILE = "cnki.json"
+OUTPUT_FILE = "AIGC-EDU-test.json"
+
 
 
 def normalize_id(text: str) -> str:
@@ -20,6 +21,8 @@ def parse_cnki_txt(file_path: str) -> List[Dict[str, Any]]:
     with open(file_path, "r", encoding="utf-8") as f:
         for line in f:
             line = line.strip()
+
+            # 空行表示一条记录结束
             if not line:
                 if current:
                     records.append(current)
@@ -41,7 +44,9 @@ def parse_cnki_txt(file_path: str) -> List[Dict[str, Any]]:
                 "Source-文献来源": "source",
                 "Keyword-关键词": "keywords",
                 "Summary-摘要": "abstract",
-                "PubTime-发表时间": "year",
+                "PubTime-发表时间": "pubtime",
+                "Year-年": "year",
+                "DOI-DOI": "doi",
             }
 
             if key in field_map:
@@ -51,6 +56,7 @@ def parse_cnki_txt(file_path: str) -> List[Dict[str, Any]]:
         records.append(current)
 
     return records
+
 
 def build_meta_only_corpus(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     corpus = []
@@ -64,6 +70,11 @@ def build_meta_only_corpus(records: List[Dict[str, Any]]) -> List[Dict[str, Any]
 
         paper_id = normalize_id(title)
 
+        # 优先使用 Year-年，如果没有再从 PubTime 提取
+        year = r.get("year", "")
+        if not year and "pubtime" in r:
+            year = r["pubtime"][:4]
+
         corpus.append({
             "id": paper_id,
             "meta": {
@@ -73,7 +84,9 @@ def build_meta_only_corpus(records: List[Dict[str, Any]]) -> List[Dict[str, Any]
                 "source": r.get("source", ""),
                 "keywords": r.get("keywords", ""),
                 "abstract": abstract,
-                "year": r.get("year", ""),
+                "year": year,
+                "time": r.get("pubtime", ""),
+                "doi": r.get("doi", ""),
                 "database": r.get("database", "")
             }
         })
