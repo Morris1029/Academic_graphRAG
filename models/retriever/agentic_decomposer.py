@@ -19,7 +19,8 @@ class GraphQ:
         self.dataset_name = dataset_name
             
     def read_schema(self, schema_path: str) -> str:
-        with open(schema_path, "r") as f:
+        # Always read schema as UTF-8 to avoid locale-dependent decode failures.
+        with open(schema_path, "r", encoding="utf-8", errors="replace") as f:
             schema = f.read()
         return schema
 

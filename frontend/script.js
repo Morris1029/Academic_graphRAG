@@ -90,6 +90,7 @@ const i18n = {
         msgLoadGraphFailed: 'Failed to load graph data',
         msgQuestionFailed: 'Failed to process question: ',
         previewPrefix: 'Preview: ',
+        decomposeFallbackNotice: 'Decomposition fallback enabled due to schema decode/parse issue; retrieval may be less precise.',
         decomposeStart: 'Starting to decompose your question into sub-questions...',
         decomposeSummary: (t) => `Decomposition complete. Total sub-questions: ${t}`,
         subQuestion: (i,t,q) => `Sub-question ${i}/${t}: ${q}`,
@@ -105,6 +106,7 @@ const i18n = {
         retrievalChunks: 'Relevant chunks:',
         questionDecompositionTitle: 'Question Decomposition',
         retrievedTriplesLabel: 'Retrieved triples:',
+        retrievedChunksLabel: 'Retrieved chunks:',
         triplesLabel: 'Triples',
         chunksLabel: 'Chunks',
         timeLabel: 'Time',
@@ -209,6 +211,7 @@ const i18n = {
         msgLoadGraphFailed: '图谱数据加载失败',
         msgQuestionFailed: '问题处理失败：',
         previewPrefix: '预览：',
+        decomposeFallbackNotice: '问题分解已降级（Schema 解码/解析异常），当前检索精度可能下降。',
         decomposeStart: '开始将你的问题分解为子问题…',
         decomposeSummary: (t) => `分解完成。子问题总数：${t}`,
         subQuestion: (i,t,q) => `子问题 ${i}/${t}：${q}`,
@@ -224,6 +227,7 @@ const i18n = {
         retrievalChunks: '相关文本片段：',
         questionDecompositionTitle: '问题分解',
         retrievedTriplesLabel: '检索三元组：',
+        retrievedChunksLabel: '检索文本块：',
         triplesLabel: '三元组',
         chunksLabel: '片段',
         timeLabel: '耗时',
@@ -967,7 +971,9 @@ async function askQuestion() {
             try {
                 const data = JSON.parse(event.data);
                 if (data.type === 'qa_update') {
-                    if (data.stage === 'sub_question') {
+                    if (data.stage === 'decompose' && data.decompose_fallback) {
+                        showMessage((i18n[currentLang] || i18n.en).decomposeFallbackNotice, 'warning', 10000);
+                    } else if (data.stage === 'sub_question') {
                         const q = (data.question || '').toString();
                         if (currentLang === 'zh') {
                             const msg = `【子问题 ${data.index}/${data.total}】${q}｜三元组：${data.triples_count || 0}｜片段：${data.chunks_count || 0}`;
@@ -1033,6 +1039,9 @@ function displayAnswer(result) {
     console.log('displayAnswer called with result:', result);
 
     document.getElementById('answerContent').textContent = result.answer;
+    if (result.decompose_fallback) {
+        showMessage((i18n[currentLang] || i18n.en).decomposeFallbackNotice, 'warning', 10000);
+    }
 
     // Display detailed retrieval information
     displayRetrievalDetails(result);
@@ -1060,6 +1069,23 @@ function displayRetrievalDetails(result) {
             if (!seen.has(key)) {
                 seen.add(key);
                 out.push(`(${m[1].trim()}, ${m[2].trim()}, ${m[3].trim()})`);
+            }
+        }
+        return out;
+    }
+
+    function dedupChunks(arr) {
+        if (!Array.isArray(arr)) return [];
+        const seen = new Set();
+        const out = [];
+        for (const item of arr) {
+            if (typeof item !== 'string') continue;
+            const normalized = item.replace(/\s+/g, ' ').trim();
+            if (!normalized) continue;
+            const key = normalized.toLowerCase();
+            if (!seen.has(key)) {
+                seen.add(key);
+                out.push(normalized);
             }
         }
         return out;
@@ -1118,10 +1144,13 @@ function displayRetrievalDetails(result) {
         result.sub_questions.forEach((sq, index) => {
             const step = result.reasoning_steps?.[index] || {};
             const stepTriples = dedupTriples(step.triples || []);
+            const stepChunks = dedupChunks(step.chunk_contents || result.retrieved_chunks || []);
 
             // 1. 生成新的 HTML 逻辑
-            const visibleTriples = stepTriples.slice(0, 3);
-            const hiddenTriples = stepTriples.slice(3);
+            const visibleTriples = stepTriples.slice(0, 2);
+            const hiddenTriples = stepTriples.slice(2);
+            const visibleChunks = stepChunks.slice(0, 2);
+            const hiddenChunks = stepChunks.slice(2);
 
             let triplesHtml = '';
             if (stepTriples.length > 0) {
@@ -1138,8 +1167,31 @@ function displayRetrievalDetails(result) {
                             </ul>
                             <span class="more-indicator" 
                                   style="cursor: pointer; text-decoration: underline; color: #3b82f6;" 
-                                  onclick="toggleHiddenTriples('hidden-triples-${index}', this)">
+                                  onclick="toggleHiddenList('hidden-triples-${index}', this, 'triples')">
                                 ${t.moreTriples(hiddenTriples.length)}
+                            </span>
+                        ` : ''}
+                    </div>
+                `;
+            }
+
+            let chunksHtml = '';
+            if (stepChunks.length > 0) {
+                chunksHtml = `
+                    <div class="triples-preview">
+                        <strong>${t.retrievedChunksLabel}</strong>
+                        <ul>
+                            ${visibleChunks.map(chunk => `<li>${chunk}</li>`).join('')}
+                        </ul>
+
+                        ${hiddenChunks.length > 0 ? `
+                            <ul id="hidden-chunks-${index}" style="display: none; margin-top: 0;">
+                                ${hiddenChunks.map(chunk => `<li>${chunk}</li>`).join('')}
+                            </ul>
+                            <span class="more-indicator"
+                                  style="cursor: pointer; text-decoration: underline; color: #3b82f6;"
+                                  onclick="toggleHiddenList('hidden-chunks-${index}', this, 'chunks')">
+                                ${t.moreTriples(hiddenChunks.length)}
                             </span>
                         ` : ''}
                     </div>
@@ -1156,10 +1208,11 @@ function displayRetrievalDetails(result) {
                     </div>
                     <div class="subquestion-stats">
                         <span>${t.triplesLabel}: ${stepTriples.length}</span>
-                        <span>${t.chunksLabel}: ${step.chunks_count || 0}</span>
+                        <span>${t.chunksLabel}: ${stepChunks.length || step.chunks_count || 0}</span>
                         <span>${t.timeLabel}: ${(step.processing_time || 0).toFixed(2)}s</span>
                     </div>
-                    ${triplesHtml} 
+                    ${triplesHtml}
+                    ${chunksHtml}
                 </div>
             `;
         });
@@ -1529,20 +1582,28 @@ function showMessage(text, type = 'info', durationMs = 5000) {
     }, durationMs);
 }
 
-// 添加在 script.js 末尾
-window.toggleHiddenTriples = function(id, btn) {
+function getMoreLabel(kind, count) {
+    const t = i18n[currentLang] || i18n.en;
+    // Reuse the same wording style for triples/chunks to keep i18n compact.
+    return t.moreTriples(count);
+}
+
+window.toggleHiddenList = function(id, btn, kind = 'triples') {
     const t = i18n[currentLang] || i18n.en;
     const hiddenList = document.getElementById(id);
-    if (hiddenList) {
-        // 切换显示状态
-        if (hiddenList.style.display === 'none') {
-            hiddenList.style.display = 'block';
-            btn.textContent = t.showLess;
-        } else {
-            hiddenList.style.display = 'none';
-            // 恢复显示 "...and X more"
-            const count = hiddenList.getElementsByTagName('li').length;
-            btn.textContent = t.moreTriples(count);
-        }
+    if (!hiddenList) return;
+
+    if (hiddenList.style.display === 'none') {
+        hiddenList.style.display = 'block';
+        btn.textContent = t.showLess;
+    } else {
+        hiddenList.style.display = 'none';
+        const count = hiddenList.getElementsByTagName('li').length;
+        btn.textContent = getMoreLabel(kind, count);
     }
+}
+
+// Backward compatibility for previous inline handlers.
+window.toggleHiddenTriples = function(id, btn) {
+    window.toggleHiddenList(id, btn, 'triples');
 }

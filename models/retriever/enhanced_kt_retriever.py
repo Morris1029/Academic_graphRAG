@@ -1074,6 +1074,31 @@ class KTRetriever:
         self._extract_query_keywords(question)
         return
 
+    def _get_node_schema_type(self, node_id: str) -> str:
+        if node_id not in self.graph.nodes:
+            return ""
+        node_data = self.graph.nodes[node_id]
+        props = node_data.get("properties", {})
+        if isinstance(props, dict):
+            schema_type = props.get("schema_type", "")
+            if schema_type:
+                return str(schema_type).strip()
+        schema_type = node_data.get("schema_type", "")
+        return str(schema_type).strip() if schema_type else ""
+
+    def _is_primary_entity_node(self, node_id: str) -> bool:
+        if node_id not in self.graph.nodes:
+            return False
+        node_data = self.graph.nodes[node_id]
+        label = str(node_data.get("label", "")).lower()
+        if label == "entity":
+            return True
+        return bool(self._get_node_schema_type(node_id))
+
+    def _is_paper_node(self, node_id: str) -> bool:
+        schema_type = self._get_node_schema_type(node_id).lower()
+        return schema_type in {"论文", "paper"}
+
     def _node_relation_retrieval(self, question_embed: torch.Tensor, question: str = "") -> Dict:
         overall_start = time.time()
 
@@ -1153,7 +1178,10 @@ class KTRetriever:
                 )
 
             candidate_nodes.sort(key=lambda x: x[1], reverse=True)
-            top_nodes = [node for node, score in candidate_nodes[:self.top_k] if score > 0.05]
+            filtered_candidate_nodes = [node for node, score in candidate_nodes if score > 0.05]
+            entity_first_nodes = [node for node in filtered_candidate_nodes if self._is_primary_entity_node(node)]
+            fallback_nodes = [node for node in filtered_candidate_nodes if node not in entity_first_nodes]
+            top_nodes = (entity_first_nodes + fallback_nodes)[:self.top_k]
 
             all_relations = future_faiss_relations.result()
 
@@ -1178,10 +1206,7 @@ class KTRetriever:
                 all_relations
             )
 
-            all_triples = list({
-                triple for triple in 
-                one_hop_triples + path_triples + relation_triples
-            })
+            all_triples = list(dict.fromkeys(one_hop_triples + path_triples + relation_triples))
             chunk_results = future_chunk_retrieval.result()
 
         return {
@@ -1530,10 +1555,10 @@ class KTRetriever:
         logger.info(f"[StepTiming] step=_merge_entity_attributes time={elapsed:.4f}")
         return merged_triples
 
-    def _process_chunk_results(self, chunk_results: Dict, question_embed: torch.Tensor, top_k: int) -> Tuple[List[str], set]:
-        """Process chunk results and return formatted results and chunk IDs."""
+    def _process_chunk_results(self, chunk_results: Dict, question_embed: torch.Tensor, top_k: int) -> Tuple[List[str], List[str]]:
+        """Process chunk results and return formatted results and ordered chunk IDs."""
         if not chunk_results:
-            return [], set()
+            return [], []
             
         reranked_results = self._rerank_chunks_by_relevance(chunk_results, question_embed, top_k)
         chunk_ids = reranked_results.get('chunk_ids', [])
@@ -1541,14 +1566,18 @@ class KTRetriever:
         chunk_contents = reranked_results.get('chunk_contents', [])
         
         formatted_results = []
-        chunk_id_set = set()
+        ordered_chunk_ids = []
+        seen_chunk_ids = set()
         
         for chunk_id, score, content in zip(chunk_ids, chunk_scores, chunk_contents):
             formatted_result = f"[Chunk {chunk_id}] {content[:200]}... [score: {score:.3f}]"
             formatted_results.append(formatted_result)
-            chunk_id_set.add(chunk_id)
+            chunk_id_str = str(chunk_id)
+            if chunk_id_str not in seen_chunk_ids:
+                seen_chunk_ids.add(chunk_id_str)
+                ordered_chunk_ids.append(chunk_id_str)
             
-        return formatted_results, chunk_id_set
+        return formatted_results, ordered_chunk_ids
     
     def _collect_all_scored_triples(self, results: Dict, question_embed: torch.Tensor) -> List[Tuple[str, str, str, float]]:
         """Collect and merge all scored triples from both paths."""
@@ -1605,6 +1634,110 @@ class KTRetriever:
                     chunk_ids.add(str(chunk_id))
                     
         return chunk_ids
+
+    def _extract_paper_anchor_triples_from_chunk_ids(self, chunk_ids: set, max_per_paper: int = 2) -> List[Tuple[str, str, str]]:
+        """Collect paper-node adjacent triples when the related paper chunk is hit."""
+        if not chunk_ids:
+            return []
+
+        paper_nodes = []
+        for node_id, node_data in self.graph.nodes(data=True):
+            if not self._is_paper_node(node_id):
+                continue
+            chunk_id = self._get_node_chunk_id(node_data)
+            if chunk_id and str(chunk_id) in chunk_ids:
+                paper_nodes.append(node_id)
+
+        if not paper_nodes:
+            return []
+
+        anchor_triples: List[Tuple[str, str, str]] = []
+        for paper_node in paper_nodes:
+            collected = 0
+            for _, target, edge_data in self.graph.out_edges(paper_node, data=True):
+                relation = edge_data.get("relation", "")
+                if relation in {"represented_by", "kw_filter_by"}:
+                    continue
+                anchor_triples.append((paper_node, relation, target))
+                collected += 1
+                if collected >= max_per_paper:
+                    break
+
+            if collected < max_per_paper:
+                for source, _, edge_data in self.graph.in_edges(paper_node, data=True):
+                    relation = edge_data.get("relation", "")
+                    if relation in {"represented_by", "kw_filter_by"}:
+                        continue
+                    anchor_triples.append((source, relation, paper_node))
+                    collected += 1
+                    if collected >= max_per_paper:
+                        break
+
+        return list(dict.fromkeys(anchor_triples))
+
+    def _has_paper_triple_in_topn(self, scored_triples: List[Tuple[str, str, str, float]], top_n: int) -> bool:
+        for h, _, t, _ in scored_triples[:top_n]:
+            if self._is_paper_node(h) or self._is_paper_node(t):
+                return True
+        return False
+
+    def _inject_paper_anchor_triples(
+        self,
+        scored_triples: List[Tuple[str, str, str, float]],
+        chunk_ids: set,
+        question_embed: torch.Tensor,
+        top_n: int = 10
+    ) -> Tuple[List[Tuple[str, str, str, float]], Dict[str, object]]:
+        """
+        Inject paper-adjacent triples into top results when chunk retrieval already hit paper chunks.
+        """
+        info = {
+            "paper_anchor_injected": False,
+            "injected_count": 0,
+            "reason": "not_needed",
+        }
+        if not chunk_ids:
+            info["reason"] = "no_chunk_hits"
+            return scored_triples, info
+
+        if self._has_paper_triple_in_topn(scored_triples, top_n):
+            info["reason"] = "already_has_paper_triple"
+            return scored_triples, info
+
+        anchor_triples = self._extract_paper_anchor_triples_from_chunk_ids(chunk_ids)
+        if not anchor_triples:
+            info["reason"] = "no_paper_anchor_from_chunks"
+            return scored_triples, info
+
+        anchor_scored = self._rerank_triples_by_relevance(anchor_triples, question_embed)
+        if not anchor_scored:
+            info["reason"] = "anchor_rerank_empty"
+            return scored_triples, info
+
+        dedup_map: Dict[Tuple[str, str, str], Tuple[str, str, str, float]] = {}
+        for triple in scored_triples:
+            key = (triple[0], triple[1], triple[2])
+            if key not in dedup_map:
+                dedup_map[key] = triple
+        for triple in anchor_scored:
+            key = (triple[0], triple[1], triple[2])
+            if key not in dedup_map:
+                dedup_map[key] = triple
+
+        merged = sorted(dedup_map.values(), key=lambda x: x[3], reverse=True)
+        if not self._has_paper_triple_in_topn(merged, top_n):
+            forced = anchor_scored[:2]
+            merged_tail = [t for t in merged if (t[0], t[1], t[2]) not in {(f[0], f[1], f[2]) for f in forced}]
+            merged = forced + merged_tail
+            info["reason"] = "forced_injection"
+            info["paper_anchor_injected"] = True
+            info["injected_count"] = len(forced)
+        else:
+            info["reason"] = "score_merge_injection"
+            info["paper_anchor_injected"] = True
+            info["injected_count"] = min(2, len(anchor_scored))
+
+        return merged, info
     
     def _get_node_chunk_id(self, node_data: dict) -> str:
         """Extract chunk ID from node data, handling both old and new structures."""
@@ -1643,22 +1776,40 @@ class KTRetriever:
         chunk_retrieval_results, chunk_retrieval_ids = self._process_chunk_results(
             chunk_results, question_embed, top_k
         )
+        chunk_retrieval_id_set = set(chunk_retrieval_ids)
         
         all_scored_triples = self._collect_all_scored_triples(results, question_embed)
+        all_scored_triples, injection_info = self._inject_paper_anchor_triples(
+            all_scored_triples,
+            chunk_retrieval_id_set,
+            question_embed,
+            top_n=min(10, top_k)
+        )
+        logger.info(
+            f"paper_anchor_injected={injection_info['paper_anchor_injected']} "
+            f"count={injection_info['injected_count']} reason={injection_info['reason']}"
+        )
         limited_scored_triples = all_scored_triples[:top_k]
         
         # Format triples and extract chunk IDs
         formatted_triples = self._format_scored_triples(limited_scored_triples)
         triple_chunk_ids = self._extract_chunk_ids_from_triples(limited_scored_triples)
         
-        all_chunk_ids = chunk_retrieval_ids | triple_chunk_ids
-        matching_chunks = self._get_matching_chunks(all_chunk_ids)
+        ordered_chunk_ids = list(dict.fromkeys(
+            [str(cid) for cid in chunk_retrieval_ids] + [str(cid) for cid in triple_chunk_ids]
+        ))
+        matching_chunks = self._get_matching_chunks(set(ordered_chunk_ids))
+        chunk_map = {cid: self.chunk2id[cid] for cid in ordered_chunk_ids if cid in self.chunk2id}
+        ordered_chunks = [chunk_map[cid] for cid in ordered_chunk_ids if cid in chunk_map]
         
         retrieval_results = {
             'triples': formatted_triples,
-            'chunk_ids': list(all_chunk_ids),
-            'chunk_contents': matching_chunks,
-            'chunk_retrieval_results': chunk_retrieval_results
+            'chunk_ids': ordered_chunk_ids,
+            'chunk_contents': ordered_chunks if ordered_chunks else matching_chunks,
+            'chunk_retrieval_results': chunk_retrieval_results,
+            'paper_anchor_injected': injection_info['paper_anchor_injected'],
+            'paper_anchor_injected_count': injection_info['injected_count'],
+            'paper_anchor_reason': injection_info['reason']
         }
         
         return retrieval_results, retrieval_time
@@ -1865,10 +2016,15 @@ class KTRetriever:
             Set of chunk IDs found in the nodes
         """
         chunk_ids = set()
+        missing_chunk_count = 0
+        skipped_non_entity_count = 0
         
         for node in nodes:
             try:
                 if node in self.graph.nodes:
+                    if not self._is_primary_entity_node(node):
+                        skipped_non_entity_count += 1
+                        continue
                     data = self.graph.nodes[node]
                     chunk_id = (
                         data.get('properties', {}).get('chunk id') 
@@ -1878,12 +2034,16 @@ class KTRetriever:
                     if chunk_id:
                         chunk_ids.add(str(chunk_id))
                     else:
-                        logger.warning(f"Debug: No chunk ID found for node {node}")
+                        missing_chunk_count += 1
                 else:
                     logger.warning(f"Debug: Node {node} not found in graph")
             except Exception as e:
                 logger.error(f"Debug: Error processing node {node}: {str(e)}")
                 continue
+        if skipped_non_entity_count > 0:
+            logger.debug(f"Skipped {skipped_non_entity_count} non-entity nodes when extracting chunk IDs")
+        if missing_chunk_count > 0:
+            logger.debug(f"Missing chunk ID for {missing_chunk_count} entity nodes during chunk extraction")
         
         return chunk_ids
 

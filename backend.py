@@ -124,6 +124,9 @@ class QuestionResponse(BaseModel):
     retrieved_chunks: List[str]
     reasoning_steps: List[Dict]
     visualization_data: Dict
+    decompose_fallback: bool = False
+    decompose_error: Optional[str] = None
+    schema_path_used: Optional[str] = None
 
 
 def ensure_demo_schema_exists() -> str:
@@ -770,14 +773,13 @@ async def ask_question(request: QuestionRequest, client_id: str = "default"):
             logger.debug(f"QA start ws send failed: {_e}")
 
         # Helper functions (reuse a simplified version of main.py logic)
-        def _dedup(items):
-            return list({x: None for x in items}.keys())
-
         def _merge_chunk_contents(ids, mapping):
             return [mapping.get(i, f"[Missing content for chunk {i}]") for i in ids]
 
         # Step 1: decomposition
         await send_progress_update(client_id, "retrieval", 50, "Decomposing question...")
+        decompose_fallback = False
+        decompose_error: Optional[str] = None
         try:
             # Offload decomposition to executor
             loop = asyncio.get_running_loop()
@@ -790,20 +792,35 @@ async def ask_question(request: QuestionRequest, client_id: str = "default"):
                     "stage": "decompose",
                     "sub_questions_count": len(sub_questions),
                     "sub_questions": [sq.get("sub-question", "") for sq in sub_questions][:5],
+                    "decompose_fallback": False,
+                    "schema_path": schema_path,
                     "timestamp": datetime.now().isoformat()
                 }, client_id)
                 await asyncio.sleep(0.05)
             except Exception:
                 pass
         except Exception as e:
-            logger.error(f"Decompose failed: {e}")
+            logger.error(f"Decompose failed: {e} | schema_path={schema_path}")
             sub_questions = [{"sub-question": question}]
             involved_types = {"nodes": [], "relations": [], "attributes": []}
             decomposition = {"sub_questions": sub_questions, "involved_types": involved_types}
+            decompose_fallback = True
+            decompose_error = str(e)
+            try:
+                await manager.send_message({
+                    "type": "qa_update",
+                    "stage": "decompose",
+                    "decompose_fallback": True,
+                    "decompose_error": decompose_error[:300],
+                    "schema_path": schema_path,
+                    "timestamp": datetime.now().isoformat()
+                }, client_id)
+            except Exception:
+                pass
 
         reasoning_steps = []
-        all_triples = set()
-        all_chunk_ids = set()
+        all_triples: Dict[str, None] = {}
+        all_chunk_ids: Dict[str, None] = {}
         all_chunk_contents: Dict[str, str] = {}
 
         # Step 2: initial retrieval for each sub-question
@@ -825,15 +842,20 @@ async def ask_question(request: QuestionRequest, client_id: str = "default"):
             triples = retrieval_results.get('triples', []) or []
             chunk_ids = retrieval_results.get('chunk_ids', []) or []
             chunk_contents = retrieval_results.get('chunk_contents', []) or []
+            step_chunk_contents: List[str] = []
             if isinstance(chunk_contents, dict):
                 for cid, ctext in chunk_contents.items():
                     all_chunk_contents[cid] = ctext
+                    step_chunk_contents.append(ctext)
             else:
                 for i_c, cid in enumerate(chunk_ids):
                     if i_c < len(chunk_contents):
                         all_chunk_contents[cid] = chunk_contents[i_c]
-            all_triples.update(triples)
-            all_chunk_ids.update(chunk_ids)
+                        step_chunk_contents.append(chunk_contents[i_c])
+            for triple_item in triples:
+                all_triples.setdefault(triple_item, None)
+            for chunk_id in chunk_ids:
+                all_chunk_ids.setdefault(str(chunk_id), None)
             reasoning_steps.append({
                 "type": "sub_question",
                 "question": sq_text,
@@ -841,7 +863,8 @@ async def ask_question(request: QuestionRequest, client_id: str = "default"):
                 "triples_count": len(triples),
                 "chunks_count": len(chunk_ids),
                 "processing_time": elapsed,
-                "chunk_contents": list(all_chunk_contents.values())[:3]
+                "chunk_contents": step_chunk_contents,
+                "chunk_ids": [str(cid) for cid in chunk_ids]
             })
 
             # Stream this sub-question's partial result to frontend via WebSocket
@@ -880,8 +903,8 @@ async def ask_question(request: QuestionRequest, client_id: str = "default"):
         thoughts = []
 
         # Initial answer attempt
-        initial_triples = _dedup(list(all_triples))
-        initial_chunk_ids = list(set(all_chunk_ids))
+        initial_triples = list(all_triples.keys())
+        initial_chunk_ids = list(all_chunk_ids.keys())
         initial_chunk_contents = _merge_chunk_contents(initial_chunk_ids, all_chunk_contents)
         context_initial = "=== Triples ===\n" + "\n".join(initial_triples[:20]) + "\n=== Chunks ===\n" + "\n".join(
             initial_chunk_contents[:10])
@@ -895,8 +918,8 @@ async def ask_question(request: QuestionRequest, client_id: str = "default"):
         final_answer = initial_answer
 
         for step in range(1, max_steps + 1):
-            loop_triples = _dedup(list(all_triples))
-            loop_chunk_ids = list(set(all_chunk_ids))
+            loop_triples = list(all_triples.keys())
+            loop_chunk_ids = list(all_chunk_ids.keys())
             loop_chunk_contents = _merge_chunk_contents(loop_chunk_ids, all_chunk_contents)
             loop_ctx = "=== Triples ===\n" + "\n".join(loop_triples[:20]) + "\n=== Chunks ===\n" + "\n".join(
                 loop_chunk_contents[:10])
@@ -971,15 +994,17 @@ Your reasoning:
                     for i_c, cid in enumerate(new_chunk_ids):
                         if i_c < len(new_chunk_contents):
                             all_chunk_contents[cid] = new_chunk_contents[i_c]
-                all_triples.update(new_triples)
-                all_chunk_ids.update(new_chunk_ids)
+                for triple_item in new_triples:
+                    all_triples.setdefault(triple_item, None)
+                for chunk_id in new_chunk_ids:
+                    all_chunk_ids.setdefault(str(chunk_id), None)
             except Exception as e:
                 logger.error(f"Iterative retrieval failed: {e}")
                 break
 
         # Final aggregation
-        final_triples = _dedup(list(all_triples))[:20]
-        final_chunk_ids = list(set(all_chunk_ids))
+        final_triples = list(all_triples.keys())[:20]
+        final_chunk_ids = list(all_chunk_ids.keys())
         final_chunk_contents = _merge_chunk_contents(final_chunk_ids, all_chunk_contents)[:10]
 
         await send_progress_update(client_id, "retrieval", 100, "Answer generation completed!")
@@ -1016,7 +1041,10 @@ Your reasoning:
             retrieved_triples=final_triples,
             retrieved_chunks=final_chunk_contents,
             reasoning_steps=reasoning_steps,
-            visualization_data=visualization_data
+            visualization_data=visualization_data,
+            decompose_fallback=decompose_fallback,
+            decompose_error=decompose_error,
+            schema_path_used=schema_path
         )
     except Exception as e:
         await send_progress_update(client_id, "retrieval", 0, f"Question answering failed: {str(e)}")

@@ -3,9 +3,9 @@ import os
 from typing import List, Dict, Any
 import hashlib
 
-INPUT_FILE = "D:/STUDY MO/Research/Data/AIGC-EDU-test.txt"
+INPUT_FILE = "D:/STUDY MO/Research/Data/AIGC-EDU.txt"
 OUTPUT_DIR = "data/uploaded/wos_paper_dataset"
-OUTPUT_FILE = "AIGC-EDU-test.json"
+OUTPUT_FILE = "AIGC-EDU.json"
 
 
 
