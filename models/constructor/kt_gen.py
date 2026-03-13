@@ -30,7 +30,7 @@ class KTBuilder:
         self.datasets_no_chunk = config.construction.datasets_no_chunk
         self.token_len = 0
         self.lock = threading.Lock()
-        self.llm_client = call_llm_api.LLMCompletionCall()
+        self.llm_client = call_llm_api.LLMCompletionCall(scope="kg")
         self.all_chunks = {}
         self.mode = mode or config.construction.mode
         self.doc_meta_by_chunk_id: Dict[str, Dict[str, Any]] = {}

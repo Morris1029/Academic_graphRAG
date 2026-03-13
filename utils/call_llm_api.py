@@ -1,11 +1,8 @@
 import os
 import re
-from typing import Optional
 
-# 引入 LangChain 的 OpenAI 集成
-from langchain_openai import ChatOpenAI, AzureChatOpenAI
-from langchain_core.messages import HumanMessage
 from dotenv import load_dotenv
+from langchain_openai import AzureChatOpenAI, ChatOpenAI
 
 from utils.logger import logger
 
@@ -13,92 +10,96 @@ load_dotenv()
 
 
 class LLMCompletionCall:
-    def __init__(self):
+    def __init__(self, scope: str = "default"):
         """
-        初始化 LLM 客户端。
-        内部现在使用 LangChain 的 ChatModel 接口，
-        但对外保持原有兼容性，同时提供获取 LangChain 对象的能力。
+        Initialize an LLM client for a specific workflow scope.
+
+        Supported scopes:
+        - default: legacy single-model path
+        - kg: graph extraction and community summaries
+        - rag: question decomposition and retrieval QA
         """
-        self.llm_model_name = os.getenv("LLM_MODEL", "deepseek-chat")
-        self.llm_base_url = os.getenv("LLM_BASE_URL", "https://api.deepseek.com")
-        self.llm_api_key = os.getenv("LLM_API_KEY", "")
+        self.scope = (scope or "default").lower()
+        self.llm_model_name, self.llm_base_url, self.llm_api_key = self._resolve_config(self.scope)
 
         if not self.llm_api_key:
-            raise ValueError("LLM API key not provided")
+            raise ValueError(f"{self.scope.upper()} LLM API key not provided")
 
         self.openai_provider = os.getenv("OPENAI_PROVIDER", "openai").lower()
+        self._lc_model = self._build_model()
 
-        # --- LangChain 对象初始化 ---
-        # 统一设置 temperature=0.3
-        if self.openai_provider == "azure":
-            self.api_version = os.getenv("API_VERSION", "2025-01-01-preview")
-            self._lc_model = AzureChatOpenAI(
-                azure_endpoint=self.llm_base_url,
-                api_key=self.llm_api_key,
-                api_version=self.api_version,
-                deployment_name=self.llm_model_name,
-                temperature=0.3
+    def _resolve_config(self, scope: str):
+        if scope == "kg":
+            return (
+                os.getenv("KG_LLM_MODEL", "qwen3-max"),
+                os.getenv("KG_LLM_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
+                os.getenv("KG_LLM_API_KEY", ""),
             )
-        else:
-            # 适用于 OpenAI 以及兼容 OpenAI 接口的模型（如 DeepSeek, Moonshot 等）
-            self._lc_model = ChatOpenAI(
+
+        if scope == "rag":
+            return (
+                os.getenv("RAG_LLM_MODEL", "deepseek-chat"),
+                os.getenv("RAG_LLM_BASE_URL", "https://api.deepseek.com"),
+                os.getenv("RAG_LLM_API_KEY", ""),
+            )
+
+        return (
+            os.getenv("LLM_MODEL", "deepseek-chat"),
+            os.getenv("LLM_BASE_URL", "https://api.deepseek.com"),
+            os.getenv("LLM_API_KEY", ""),
+        )
+
+    def _build_model(self):
+        if self.scope in {"kg", "rag"}:
+            return ChatOpenAI(
                 model=self.llm_model_name,
                 base_url=self.llm_base_url,
                 api_key=self.llm_api_key,
-                temperature=0.3
+                temperature=0.3,
             )
+
+        if self.openai_provider == "azure":
+            api_version = os.getenv("API_VERSION", "2025-01-01-preview")
+            return AzureChatOpenAI(
+                azure_endpoint=self.llm_base_url,
+                api_key=self.llm_api_key,
+                api_version=api_version,
+                deployment_name=self.llm_model_name,
+                temperature=0.3,
+            )
+
+        return ChatOpenAI(
+            model=self.llm_model_name,
+            base_url=self.llm_base_url,
+            api_key=self.llm_api_key,
+            temperature=0.3,
+        )
 
     def call_api(self, content: str) -> str:
         """
-        供原有 Youtu-GraphRAG 代码调用。
-        输入 Prompt 字符串，返回清洗后的文本字符串。
-
-        Args:
-            content: Prompt content
-
-        Returns:
-            Generated text response
+        Keep the original project-facing API stable.
         """
         try:
-            # 使用 LangChain 的 invoke 方法
-            # LangChain 会自动将 str 转换为 HumanMessage
             response = self._lc_model.invoke(content)
-
-            # 获取 content 内容 (可能是 str 或 list，通常 text 模型返回 str)
             raw_content = response.content
             if not isinstance(raw_content, str):
                 raw_content = str(raw_content)
-
-            clean_completion = self._clean_llm_content(raw_content)
-            return clean_completion
-
+            return self._clean_llm_content(raw_content)
         except Exception as e:
-            logger.error(f"LLM api calling failed via LangChain. Error: {e}")
+            logger.error(f"LLM api calling failed via LangChain. scope={self.scope} error={e}")
             raise e
 
     @property
     def langchain_model(self):
-        """
-        [新接口] 供新的 Agent 代码获取 LangChain ChatModel 对象。
-        用于 LangGraph 编排、Tool Binding 等高级功能。
-
-        Usage:
-            llm_client = LLMCompletionCall()
-            agent_model = llm_client.langchain_model
-            # agent_model.bind_tools(...)
-        """
         return self._lc_model
 
     def _clean_llm_content(self, text: str) -> str:
-        """
-       保持原有的清洗逻辑，确保下游 JSON 解析不报错。
-        """
         if not isinstance(text, str):
             return ""
+
         t = text.replace("\r\n", "\n").replace("\r", "\n").strip()
         t = re.sub(r"[\u200B-\u200D\uFEFF]", "", t)
 
-        # 移除 Markdown 代码块包裹
         fence_re = re.compile(r"^\s*```(?:\s*\w+)?\s*\n(?P<body>[\s\S]*?)\n\s*```\s*$", re.MULTILINE)
         m = fence_re.match(t)
         if m:
@@ -107,7 +108,6 @@ class LLMCompletionCall:
             if t.startswith("```") and t.endswith("```") and len(t) >= 6:
                 t = t[3:-3].strip()
 
-        # 移除可能存在的 json\n 前缀
         if t.lower().startswith("json\n"):
             t = t.split("\n", 1)[1].strip()
 

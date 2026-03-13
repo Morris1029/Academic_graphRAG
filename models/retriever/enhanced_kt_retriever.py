@@ -60,7 +60,7 @@ class KTRetriever:
         self.graph = graph_processor.load_graph_from_json(json_path)
         self.qa_encoder = qa_encoder or SentenceTransformer("all-MiniLM-L6-v2")
 
-        self.llm_client = call_llm_api.LLMCompletionCall()
+        self.llm_client = call_llm_api.LLMCompletionCall(scope="rag")
         
         if device == "cuda" and not torch.cuda.is_available():
             logger.warning("Warning: CUDA requested but not available, falling back to CPU")

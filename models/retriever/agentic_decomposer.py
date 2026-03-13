@@ -15,7 +15,7 @@ class GraphQ:
                 self.config = None
         else:
             self.config = config
-        self.llm_client = call_llm_api.LLMCompletionCall()
+        self.llm_client = call_llm_api.LLMCompletionCall(scope="rag")
         self.dataset_name = dataset_name
             
     def read_schema(self, schema_path: str) -> str:

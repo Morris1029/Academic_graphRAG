@@ -94,6 +94,26 @@ class ConnectionManager:
 manager = ConnectionManager()
 
 
+LLM_SCOPE_ENV = {
+    "kg": ("KG_LLM_MODEL", "KG_LLM_BASE_URL", "KG_LLM_API_KEY"),
+    "rag": ("RAG_LLM_MODEL", "RAG_LLM_BASE_URL", "RAG_LLM_API_KEY"),
+    "default": ("LLM_MODEL", "LLM_BASE_URL", "LLM_API_KEY"),
+}
+
+
+def ensure_llm_scope_config(scope: str):
+    env_names = LLM_SCOPE_ENV.get(scope)
+    if not env_names:
+        raise HTTPException(status_code=500, detail=f"Unsupported LLM scope: {scope}")
+
+    _, _, api_key_env = env_names
+    if not os.getenv(api_key_env):
+        raise HTTPException(
+            status_code=500,
+            detail=f"{scope.upper()} LLM API key not found in environment variables ({api_key_env}).",
+        )
+
+
 # Request/Response models
 class FileUploadResponse(BaseModel):
     success: bool
@@ -503,8 +523,7 @@ async def construct_graph(request: GraphConstructionRequest, client_id: str = "d
             config = get_config("config/base_config.yaml")
 
         # 【关键修复】确保 LLM API Key 存在，否则这里就会抛出 500
-        if not os.getenv("LLM_API_KEY") and not config.api.llm_api_key:
-            raise HTTPException(status_code=500, detail="LLM API Key not found in environment variables.")
+        ensure_llm_scope_config("kg")
 
         # Initialize KTBuilder
         builder = constructor.KTBuilder(
@@ -741,6 +760,8 @@ async def ask_question(request: QuestionRequest, client_id: str = "default"):
         global config
         if config is None:
             config = get_config("config/base_config.yaml")
+
+        ensure_llm_scope_config("rag")
 
         graphq = decomposer.GraphQ(dataset_name, config=config)
         kt_retriever = retriever.KTRetriever(
@@ -1398,6 +1419,8 @@ async def reconstruct_dataset(dataset_name: str, client_id: str = "default"):
         global config
         if config is None:
             config = get_config("config/base_config.yaml")
+
+        ensure_llm_scope_config("kg")
 
         # Choose schema: dataset-specific or default demo
         schema_path = get_schema_path_for_dataset(dataset_name)

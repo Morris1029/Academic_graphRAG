@@ -64,7 +64,7 @@ class FastTreeComm:
 
         self._precompute_all_triples()
         
-        self.llm_client = call_llm_api.LLMCompletionCall()
+        self.llm_client = call_llm_api.LLMCompletionCall(scope="kg")
 
     def _build_sparse_adjacency(self):
         n = len(self.node_list)
