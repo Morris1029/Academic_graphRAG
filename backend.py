@@ -1078,6 +1078,7 @@ def prepare_subquery_visualization(sub_questions: List[Dict], reasoning_steps: L
 
 def prepare_retrieved_graph_visualization(triples: List[str]) -> Dict:
     """Prepare retrieved knowledge visualization in graph module format."""
+    fallback_entity_nodes = set()
 
     def _split_triple_content(content: str) -> List[str]:
         parts = []
@@ -1108,7 +1109,7 @@ def prepare_retrieved_graph_visualization(triples: List[str]) -> Dict:
     def _parse_entity(raw: str) -> tuple[str, str]:
         text = str(raw or "").strip()
         meta_blocks = re.findall(r"\[([^\]]+)\]", text)
-        schema_type = "entity"
+        schema_type = ""
         for block in meta_blocks:
             m = re.search(r"schema_type:\s*([^,\]]+)", block)
             if m:
@@ -1117,7 +1118,11 @@ def prepare_retrieved_graph_visualization(triples: List[str]) -> Dict:
 
         clean_name = re.sub(r"\s*\[[^\]]*\]\s*", " ", text).strip()
         clean_name = re.sub(r"\s+", " ", clean_name)
-        return clean_name, schema_type or "entity"
+        if not schema_type:
+            schema_type = "entity"
+            if clean_name:
+                fallback_entity_nodes.add(clean_name)
+        return clean_name, schema_type
 
     def _normalize_node_size(category: str) -> int:
         cat = str(category or "").strip().lower()
@@ -1204,6 +1209,13 @@ def prepare_retrieved_graph_visualization(triples: List[str]) -> Dict:
             "name": category,
             "itemStyle": {"color": color_pool[idx % len(color_pool)]},
         })
+
+    logger.info(
+        "Retrieved subgraph parse stats: nodes=%d links=%d fallback_entity_nodes=%d",
+        len(node_map),
+        len(links),
+        len(fallback_entity_nodes),
+    )
 
     return {
         "nodes": list(node_map.values()),

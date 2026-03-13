@@ -1116,19 +1116,497 @@ async function askQuestion() {
 
 function displayAnswer(result) {
     console.log('displayAnswer called with result:', result);
-
-    document.getElementById('answerContent').textContent = result.answer;
+    const answerContent = document.getElementById('answerContent');
+    if (answerContent) {
+        const answerLead = buildAnswerLead(result);
+        const chunkExplanation = buildChunkExplanation(result, answerLead);
+        const reasoningSummary = buildReasoningSummary(result, answerLead, chunkExplanation);
+        answerContent.className = 'answer-content answer-layout';
+        answerContent.innerHTML = `
+            <div class="answer-lead">
+                <div class="answer-section-title">${currentLang === 'zh' ? '直接答案' : 'Answer'}</div>
+                <div class="answer-lead-text">${renderSafeMarkdown(answerLead || '') || '<p></p>'}</div>
+            </div>
+            ${renderChunkExplanation(chunkExplanation)}
+            ${reasoningSummary}
+        `;
+    }
     if (result.decompose_fallback) {
         showMessage((i18n[currentLang] || i18n.en).decomposeFallbackNotice, 'warning', 10000);
     }
 
-    // Display detailed retrieval information
     displayRetrievalDetails(result);
 
-    // Render query analysis chart
-    // renderQueryChart(result.visualization_data);
-
     document.getElementById('answerSection').classList.remove('hidden');
+}
+
+function escapeHtml(text) {
+    return String(text || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function renderInlineMarkdown(escapedText) {
+    let html = String(escapedText || '');
+    html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+    html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+    html = html.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+    return html;
+}
+
+function renderSafeMarkdown(markdownText) {
+    const lines = String(markdownText || '').replace(/\r\n/g, '\n').split('\n');
+    const output = [];
+    let inCode = false;
+    let inUl = false;
+    let inOl = false;
+    let paragraph = [];
+
+    const flushParagraph = () => {
+        if (!paragraph.length) return;
+        output.push(`<p>${renderInlineMarkdown(paragraph.join('<br/>'))}</p>`);
+        paragraph = [];
+    };
+
+    const closeLists = () => {
+        if (inUl) {
+            output.push('</ul>');
+            inUl = false;
+        }
+        if (inOl) {
+            output.push('</ol>');
+            inOl = false;
+        }
+    };
+
+    for (const rawLine of lines) {
+        const line = escapeHtml(rawLine);
+        const trimmed = line.trim();
+
+        if (trimmed.startsWith('```')) {
+            flushParagraph();
+            closeLists();
+            if (!inCode) {
+                inCode = true;
+                output.push('<pre><code>');
+            } else {
+                inCode = false;
+                output.push('</code></pre>');
+            }
+            continue;
+        }
+
+        if (inCode) {
+            output.push(line);
+            continue;
+        }
+
+        if (!trimmed) {
+            flushParagraph();
+            closeLists();
+            continue;
+        }
+
+        const heading = trimmed.match(/^#{1,3}\s+(.+)$/);
+        if (heading) {
+            flushParagraph();
+            closeLists();
+            output.push(`<h4>${renderInlineMarkdown(heading[1])}</h4>`);
+            continue;
+        }
+
+        const ulItem = trimmed.match(/^[-*]\s+(.+)$/);
+        if (ulItem) {
+            flushParagraph();
+            if (inOl) {
+                output.push('</ol>');
+                inOl = false;
+            }
+            if (!inUl) {
+                output.push('<ul>');
+                inUl = true;
+            }
+            output.push(`<li>${renderInlineMarkdown(ulItem[1])}</li>`);
+            continue;
+        }
+
+        const olItem = trimmed.match(/^\d+\.\s+(.+)$/);
+        if (olItem) {
+            flushParagraph();
+            if (inUl) {
+                output.push('</ul>');
+                inUl = false;
+            }
+            if (!inOl) {
+                output.push('<ol>');
+                inOl = true;
+            }
+            output.push(`<li>${renderInlineMarkdown(olItem[1])}</li>`);
+            continue;
+        }
+
+        closeLists();
+        paragraph.push(trimmed);
+    }
+
+    flushParagraph();
+    closeLists();
+    if (inCode) output.push('</code></pre>');
+    return output.join('\n');
+}
+
+function stripMarkdown(text) {
+    return String(text || '')
+        .replace(/```[\s\S]*?```/g, ' ')
+        .replace(/`([^`]+)`/g, '$1')
+        .replace(/\*\*([^*]+)\*\*/g, '$1')
+        .replace(/\*([^*]+)\*/g, '$1')
+        .replace(/#{1,6}\s+/g, '')
+        .replace(/>\s*/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+function normalizeAnswerText(text) {
+    return String(text || '')
+        .replace(/\r\n/g, '\n')
+        .replace(/\n{3,}/g, '\n\n')
+        .replace(/[ \t]+\n/g, '\n')
+        .trim();
+}
+
+function cleanAnswerArtifacts(text) {
+    let cleaned = normalizeAnswerText(text);
+    const soAnswerMatch = cleaned.match(/So the answer is:\s*([\s\S]*)$/i);
+    if (soAnswerMatch && soAnswerMatch[1]) {
+        cleaned = soAnswerMatch[1].trim();
+    }
+    cleaned = cleaned
+        .replace(/\*\*推理过程\*\*[:：]?/g, '')
+        .replace(/\*\*结论\*\*[:：]?/g, '')
+        .replace(/推理过程[:：]/g, '')
+        .replace(/结论[:：]/g, '')
+        .replace(/^根据提供的(?:知识|检索)?上下文(?:，|,)?(?:可以明确回答(?:当前)?问题。?)?/g, '')
+        .replace(/^可以明确回答(?:当前)?问题。?/g, '')
+        .trim();
+    return cleaned;
+}
+
+function extractFirstSentence(text) {
+    const cleaned = stripMarkdown(cleanAnswerArtifacts(text));
+    if (!cleaned) return '';
+    const parts = cleaned.split(/(?<=[。！？!?])/).map((part) => part.trim()).filter(Boolean);
+    return parts.length ? parts[0] : cleaned;
+}
+
+function buildAnswerLead(result) {
+    return extractFirstSentence(result?.answer || '');
+}
+
+function extractChunkTitle(chunkText) {
+    const text = String(chunkText || '');
+    const match = text.match(/Title:\s*(.+?)(?:\\n|\n|Abstract:|$)/i);
+    return match ? match[1].trim() : '';
+}
+
+function extractChunkAbstract(chunkText) {
+    const text = String(chunkText || '');
+    const match = text.match(/Abstract:\s*([\s\S]*)$/i);
+    return match ? match[1].replace(/\\n/g, ' ').replace(/\s+/g, ' ').trim() : '';
+}
+
+function extractAnswerKeywords(text) {
+    const stopWords = new Set([
+        '根据提供', '当前问题', '知识上下文', '检索上下文', '研究', '框架', '教学',
+        '问题', '构建', '作者', '学者', '当前', '可以', '明确', '回答', '提出',
+        '说明', '部分'
+    ]);
+    const tokens = stripMarkdown(text).match(/[\u4e00-\u9fffA-Za-z0-9]{2,}/g) || [];
+    return Array.from(new Set(tokens.filter((token) => !stopWords.has(token))));
+}
+
+function splitAbstractSentences(text) {
+    return String(text || '')
+        .split(/(?<=[。！？!?；;])/)
+        .map((item) => item.trim())
+        .filter(Boolean);
+}
+
+function scoreSentenceByKeywords(sentence, keywords) {
+    const text = String(sentence || '');
+    let score = 0;
+    for (const keyword of keywords) {
+        if (text.includes(keyword)) {
+            score += Math.max(1, Math.min(keyword.length, 6));
+        }
+    }
+    return score;
+}
+
+function buildChunkExplanation(result, answerLead) {
+    const chunks = Array.isArray(result?.retrieved_chunks) ? result.retrieved_chunks : [];
+    const keywords = extractAnswerKeywords(answerLead);
+    let best = null;
+
+    for (const chunk of chunks) {
+        const title = extractChunkTitle(chunk);
+        const abstract = extractChunkAbstract(chunk);
+        if (!abstract) continue;
+
+        const sentences = splitAbstractSentences(abstract);
+        if (!sentences.length) continue;
+
+        let selected = sentences[0];
+        let selectedScore = scoreSentenceByKeywords(title, keywords) + scoreSentenceByKeywords(selected, keywords) * 2;
+
+        for (const sentence of sentences) {
+            const score = scoreSentenceByKeywords(title, keywords) + scoreSentenceByKeywords(sentence, keywords) * 2;
+            if (score > selectedScore) {
+                selected = sentence;
+                selectedScore = score;
+            }
+        }
+
+        if (selected.length < 36 && sentences.length > 1) {
+            selected = `${selected} ${sentences[1]}`.trim();
+        }
+
+        if (!best || selectedScore > best.score) {
+            best = {
+                title,
+                summary: selected,
+                score: selectedScore
+            };
+        }
+    }
+
+    if (!best) return null;
+    return {
+        title: best.title,
+        summary: best.summary
+    };
+}
+
+function renderChunkExplanation(chunkExplanation) {
+    if (!chunkExplanation || !chunkExplanation.summary) return '';
+    const titleLabel = currentLang === 'zh' ? 'Chunk简要说明' : 'Chunk Note';
+    const sourceLabel = currentLang === 'zh' ? '来源' : 'Source';
+    return `
+        <div class="answer-evidence">
+            <div class="answer-section-title">${titleLabel}</div>
+            ${chunkExplanation.title ? `<div class="answer-evidence-source">${sourceLabel}: ${escapeHtml(chunkExplanation.title)}</div>` : ''}
+            <p>${escapeHtml(chunkExplanation.summary)}</p>
+        </div>
+    `;
+}
+
+function parseTripleText(tripleText) {
+    if (typeof tripleText !== 'string') return null;
+    const m = tripleText.match(/\(([^,]+),\s*([^,]+),\s*([^)]+)\)/);
+    if (!m) return null;
+    const subject = cleanEntityName(m[1].trim());
+    const relation = m[2].trim();
+    const object = cleanEntityName(m[3].trim());
+    return { subject, relation, object };
+}
+
+function buildReasoningSummaryLines(result) {
+    const lines = [];
+    const subQuestions = Array.isArray(result?.sub_questions) ? result.sub_questions : [];
+    const triples = Array.isArray(result?.retrieved_triples) ? result.retrieved_triples : [];
+    const chunks = Array.isArray(result?.retrieved_chunks) ? result.retrieved_chunks : [];
+
+    const focus = (subQuestions[0] && (subQuestions[0]['sub-question'] || subQuestions[0].question)) || '';
+    if (focus) {
+        lines.push((currentLang === 'zh' ? '问题聚焦：' : 'Question focus: ') + focus);
+    }
+
+    const parsedTriples = [];
+    const seen = new Set();
+    for (const triple of triples) {
+        const parsed = parseTripleText(triple);
+        if (!parsed) continue;
+        const key = `${parsed.subject}|${parsed.relation}|${parsed.object}`.toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        parsedTriples.push(parsed);
+        if (parsedTriples.length >= 2) break;
+    }
+    if (parsedTriples.length) {
+        const tripleText = parsedTriples.map(t => `${t.subject} - ${t.relation} - ${t.object}`).join('；');
+        lines.push((currentLang === 'zh' ? '关键三元组证据：' : 'Key triple evidence: ') + tripleText);
+    }
+
+    const titles = [];
+    const titleSeen = new Set();
+    for (const chunk of chunks) {
+        const title = extractChunkTitle(chunk);
+        if (!title) continue;
+        const key = title.toLowerCase();
+        if (titleSeen.has(key)) continue;
+        titleSeen.add(key);
+        titles.push(title);
+        if (titles.length >= 2) break;
+    }
+    if (titles.length) {
+        lines.push((currentLang === 'zh' ? '文本佐证：' : 'Chunk evidence: ') + titles.join('；'));
+    }
+
+    const conclusion = stripMarkdown(result?.answer || '');
+    if (conclusion) {
+        const shortConclusion = conclusion.length > 120 ? `${conclusion.slice(0, 120)}...` : conclusion;
+        lines.push((currentLang === 'zh' ? '结论归纳：' : 'Conclusion: ') + shortConclusion);
+    }
+
+    return lines.slice(0, 5);
+}
+
+function renderBriefReasoningSummary(result) {
+    const lines = buildReasoningSummaryLines(result);
+    if (!lines.length) return '';
+    const title = currentLang === 'zh' ? '简要推理过程' : 'Brief Reasoning';
+    return `
+        <div class="reasoning-summary">
+            <h4>${title}</h4>
+            <ol>
+                ${lines.map(line => `<li>${escapeHtml(line)}</li>`).join('')}
+            </ol>
+        </div>
+    `;
+}
+
+function buildReasoningSummaryItems(result, answerLead, chunkExplanation) {
+    const items = [];
+    const subQuestions = Array.isArray(result?.sub_questions) ? result.sub_questions : [];
+    const triples = Array.isArray(result?.retrieved_triples) ? result.retrieved_triples : [];
+
+    const focus = (subQuestions[0] && (subQuestions[0]['sub-question'] || subQuestions[0].question)) || '';
+    if (focus) {
+        items.push((currentLang === 'zh' ? '问题聚焦：' : 'Question focus: ') + focus);
+    }
+
+    const parsedTriples = [];
+    const seen = new Set();
+    for (const triple of triples) {
+        const parsed = parseTripleText(triple);
+        if (!parsed) continue;
+        const key = `${parsed.subject}|${parsed.relation}|${parsed.object}`.toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        parsedTriples.push(parsed);
+        if (parsedTriples.length >= 2) break;
+    }
+
+    if (parsedTriples.length) {
+        const tripleText = parsedTriples
+            .map((triple) => `${triple.subject} - ${triple.relation} - ${triple.object}`)
+            .join(currentLang === 'zh' ? '；' : '; ');
+        items.push((currentLang === 'zh' ? '关键证据：' : 'Key evidence: ') + tripleText);
+    }
+
+    if (chunkExplanation && chunkExplanation.summary) {
+        items.push((currentLang === 'zh' ? '文本佐证：' : 'Chunk support: ') + chunkExplanation.summary);
+    }
+
+    if (answerLead) {
+        items.push((currentLang === 'zh' ? '结论归纳：' : 'Conclusion: ') + answerLead);
+    }
+
+    return items.slice(0, 4);
+}
+
+function buildReasoningSummary(result, answerLead, chunkExplanation) {
+    const items = buildReasoningSummaryItems(result, answerLead, chunkExplanation);
+    if (!items.length) return '';
+    const title = currentLang === 'zh' ? '简要推理过程' : 'Brief Reasoning';
+    return `
+        <div class="reasoning-summary">
+            <h4>${title}</h4>
+            <ol>
+                ${items.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}
+            </ol>
+        </div>
+    `;
+}
+
+function trimTrailingPunctuation(text) {
+    return String(text || '').replace(/[。！？!?,，；;:\s]+$/g, '').trim();
+}
+
+function buildCombinedAnswerText(answerLead, chunkExplanation) {
+    const lead = String(answerLead || '').trim();
+    const summary = String(chunkExplanation?.summary || '').trim();
+    if (!lead) return summary;
+    if (!summary) return lead;
+    return `${trimTrailingPunctuation(lead)}。${summary}`;
+}
+
+// Override the earlier answer renderer: keep a single compact answer block.
+function displayAnswer(result) {
+    console.log('displayAnswer called with result:', result);
+    const answerContent = document.getElementById('answerContent');
+    if (answerContent) {
+        const answerLead = buildAnswerLead(result);
+        const chunkExplanation = buildChunkExplanation(result, answerLead);
+        const combinedAnswer = buildCombinedAnswerText(answerLead, chunkExplanation);
+        answerContent.className = 'answer-content answer-simple';
+        answerContent.innerHTML = renderSafeMarkdown(combinedAnswer || '') || '<p></p>';
+    }
+    if (result.decompose_fallback) {
+        showMessage((i18n[currentLang] || i18n.en).decomposeFallbackNotice, 'warning', 10000);
+    }
+
+    displayRetrievalDetails(result);
+    document.getElementById('answerSection').classList.remove('hidden');
+}
+
+function trimTrailingPunctuation(text) {
+    return String(text || '').replace(/[\u3002\uFF01\uFF1F!?,\uFF0C\uFF1B;:\s]+$/g, '').trim();
+}
+
+function buildCombinedAnswerText(answerLead, chunkExplanation) {
+    const lead = String(answerLead || '').trim();
+    const summary = String(chunkExplanation?.summary || '').trim();
+    if (!lead) return summary;
+    if (!summary) return lead;
+    return `${trimTrailingPunctuation(lead)}\u3002${summary}`;
+}
+
+function filterKnowledgeGraphForQA(kg) {
+    if (!kg || !Array.isArray(kg.nodes)) {
+        return { nodes: [], links: [], categories: [] };
+    }
+
+    const keptNodes = (kg.nodes || []).filter((node) => {
+        const category = String((node && (node.category || node.type)) || '').trim().toLowerCase();
+        return category !== 'entity';
+    });
+    const nodeIdSet = new Set(keptNodes.map((node) => String(node.id)));
+
+    const keptLinks = (kg.links || []).filter((link) => {
+        const source = typeof link.source === 'object' ? link.source.id : link.source;
+        const target = typeof link.target === 'object' ? link.target.id : link.target;
+        return nodeIdSet.has(String(source)) && nodeIdSet.has(String(target));
+    });
+
+    const categorySet = new Set(
+        keptNodes.map((node) => String((node && (node.category || node.type)) || 'entity'))
+    );
+
+    let categories = (kg.categories || []).filter((cat) => {
+        const name = String((cat && cat.name) || '').trim();
+        return name && name.toLowerCase() !== 'entity' && categorySet.has(name);
+    });
+    if (!categories.length) {
+        categories = Array.from(categorySet)
+            .filter(name => name.toLowerCase() !== 'entity')
+            .map(name => ({ name }));
+    }
+
+    return { nodes: keptNodes, links: keptLinks, categories };
 }
 
 function displayRetrievalDetails(result) {
@@ -1327,18 +1805,26 @@ function displayRetrievalDetails(result) {
             console.log('Chart container made visible');
         }
         const kg = result?.visualization_data?.knowledge_graph;
-        if (kg && Array.isArray(kg.nodes) && kg.nodes.length > 0) {
-            renderKnowledgeGraphChart(kg);
+        const filteredKg = filterKnowledgeGraphForQA(kg);
+        if (filteredKg && Array.isArray(filteredKg.nodes) && filteredKg.nodes.length > 0) {
+            renderKnowledgeGraphChart(filteredKg);
+        } else if (kg && Array.isArray(kg.nodes) && chartContainer) {
+            chartContainer.innerHTML = `<div style="color: #ffb347; text-align: center; padding: 50px;">${
+                currentLang === 'zh'
+                    ? '无可展示结构化节点（已隐藏 entity 类型）'
+                    : 'No structured nodes to display (entity hidden)'
+            }</div>`;
         } else {
-            renderTriplesChart(result.retrieved_triples || []);
+            renderTriplesChart(result.retrieved_triples || [], { hideEntity: true });
         }
     }, 200);
 }
 
-function renderTriplesChart(triples) {
+function renderTriplesChart(triples, options = {}) {
     console.log('renderTriplesChart called with:', triples.length, 'triples');
     console.log('First triple example:', triples[0]);
     const t = i18n[currentLang] || i18n.en;
+    const hideEntity = Boolean(options.hideEntity);
 
     // Helper: truncate by words. If more than 3 words, keep first 2 then ellipsis.
     function truncateWords(str){
@@ -1413,6 +1899,11 @@ function renderTriplesChart(triples) {
             // Clean entity names
             subject = cleanEntityName(subject);
             object = cleanEntityName(object);
+
+            // Optional filtering for QA subgraph: hide generic fallback type
+            if (hideEntity && (subjectType.toLowerCase() === 'entity' || objectType.toLowerCase() === 'entity')) {
+                return;
+            }
 
             // Add nodes
             if (!nodes.has(subject)) {
