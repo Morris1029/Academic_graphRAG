@@ -1,5 +1,16 @@
 construction:
   chunk_size: 1000
+  cross_doc_enabled: true
+  batch_size_docs: 24
+  token_budget_per_batch: 12000
+  bridge_relations:
+  - 扩展
+  - 对比
+  - 复用
+  - 同任务不同方法
+  - 提出
+  - 发表于
+  prompt_version: v1
   datasets_no_chunk:
   - demo
   max_workers: 32
@@ -74,7 +85,7 @@ prompts:
       ```{schema}```\n
      2. 提取准则
      - 实体命名：实体名应为具体的专有名词（如 \"Transformer\"），避免使用长句。\n
-     - 关系标准化：必须使用 Schema 中定义的标准谓语。例如：(学者)-[所属机构]->(机构)，(论文)-[发表于]->(期刊会议)。
+     - 关系标准化：必须使用 Schema 中定义的标准谓语。例如：(学者)-[隶属]->(机构)，(论文)-[发表于]->(期刊)。
      - 属性精简：Attributes 仅记录关键特征。严禁全文复制摘要，描述性属性不得超过 50 字。
      - 去噪与去冗：仅提取前三位作者和一级单位名称。禁止提取循环关系（即实体1和实体2不能相同）。忽略\"方法\"、\"研究\"等泛泛之词。
      - 灵活扩展：如果文本中包含非常有价值的知识，但 Schema 中未定义，你可以提取它并在 \"new_schema_types\" 中记录。
@@ -86,11 +97,11 @@ prompts:
       - \"attributes\": 字典格式，Key 为实体名，Value 为属性描述列表。
       - \"triples\": 列表格式，每个元素为 `[实体1, 关系, 实体2]` 的三元组数组。
       - \"entity_types\": 字典格式，Key 为实体名，Value 为 Schema 中的 Node 类型。
-      - \"new_schema_types\": (可选) 如果发现了新类型，请记录。
+      - \"new_schema_types\": 如果发现了新类型，请记录。
      【输出示例】：
      {{
       \"attributes\": {{
-        \"Attention is All You Need\": [\"标题: Attention is All You Need\", \"年份: 2017\"],
+        \"Attention is All You Need\": [\"年份: 2017\", \"来源: JMLR\", \"关键词: Attention, Deep Learning, NLP\"],
         \"Transformer\": [\"定义: 基于注意力机制的深度学习模型\"]
       }},
       \"triples\": [
@@ -101,8 +112,8 @@ prompts:
       \"entity_types\": {{
         \"Ashish Vaswani\": \"作者\",
         \"Attention is All You Need\": \"论文\",
-        \"Transformer\": \"模型\",
-        \"machine translation\": \"任务\"
+        \"Transformer\": \"技术\",
+        \"natural language processing\": \"研究主题\"
       }},
       \"new_schema_types\": {{
           \"nodes\": [],
@@ -112,6 +123,7 @@ prompts:
     }}
 "
 
+    cross_doc_agent: "You are a cross-document graph synthesis assistant.\nInput is a batch of paper facts (paper_id/title/keywords/summary/facts).\nTask: infer high-value cross-paper bridges for multi-hop QA.\nRules:\n1. Return JSON only.\n2. Use only supported bridge relations: {bridge_relations}.\n3. Prefer links supported by at least two concrete facts.\n4. Keep links specific and avoid generic statements.\nOutput JSON schema:\n{\n  \"cross_doc_triples\": [\n    {\n      \"head\": \"paper_title_or_entity\",\n      \"relation\": \"bridge_relation\",\n      \"tail\": \"paper_title_or_entity\",\n      \"source_paper_ids\": [\"id1\", \"id2\"],\n      \"evidence_chunk_ids\": [\"id1\", \"id2\"],\n      \"confidence\": 0.0,\n      \"reason\": \"short reason\"\n    }\n  ]\n}\nBatch facts:\n{batch_facts}\n"
   decomposition:
     general: "你是一个学术研究助手。你的任务是将复杂的用户问题拆解为多个可以通过图谱检索或文档阅读解决的子问题。\n\n
      【Schema 参考】：\n{ontology}\n\n
@@ -130,13 +142,16 @@ prompts:
       \   原始问题：\\\"智取生辰纲事件中，PERSON#1是谁\\\"\n   输出：\n   {{\n       \\\"sub_questions\\\": [\n           {{\\\"sub-question\\\": \\\"\
       智取生辰纲事件中，PERSON#1是谁？\\\"}}\n       ],\n       \\\"involved_types\\\": {{\n           \\\"nodes\\\": [\\\"person\\\", \\\"event\\\"],\n           \\\"relations\\\": [\\\"参与\\\"],\n           \\\"attributes\\\": [\\\"name\\\"]\n       }}\n   }}\n"
   retrieval:
-    general: "你是一个严谨的学术综述撰写者。请根据提供的【检索上下文】回答用户问题。\n\n
+    general: "你是一个严谨的学术科研助手。请根据提供的【检索上下文】回答用户问题。\n\n
       【检索上下文】：\n{context}\n\n
       【回答要求】：\n
-      1. **必须引用**：在回答中，每一处关键结论都必须引用上下文中的具体论文（使用Chunk中的【标题】或【作者】作为引用源）。\n
-      2. **结构化**：如果是综述类问题，请使用 markdown 列表或表格形式组织答案。\n
-      3. **区分事实与推断**：明确指出哪些是论文中的原话，哪些是你的总结。\n
-      4. **无中生有**：如果上下文中没有相关信息，请直接说明“现有资料不足以回答”，不要编造。\n\n
+      1. **证据来源**：证据可以来自 Triples 或 Chunks；事实类问题优先使用结构化 Triples（如“作者-撰写-论文”“论文-提出-框架”）。\n
+      2. **引用方式**：每个关键结论后追加【证据: ...】。\n
+      - Triples 证据示例：`【证据: 许晟-撰写-AIGC赋能生物工程教育的范式重构——一个“认知-实践-伦理”整合框架】`\n
+      - Chunks 证据示例：`【证据: Chunk《AIGC赋能生物工程教育的范式重构——一个“认知-实践-伦理”整合框架》】`\n
+      3. **结构化输出**：综述类问题使用 markdown 列表或表格；事实问答先给直接答案，再给简短证据说明。\n
+      4. **区分事实与推断**：明确标注哪些是上下文事实，哪些是你的总结。\n
+      5. **禁止编造**：只有在 Triples 与 Chunks 都无法支撑问题关键事实时，才回答“现有资料不足以回答”。\n\n
       【用户问题】：{question}\n\n
       【回答】：\n"
     ircot: 'You are an expert knowledge assistant using iterative retrieval with chain-of-thought

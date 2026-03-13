@@ -1077,43 +1077,138 @@ def prepare_subquery_visualization(sub_questions: List[Dict], reasoning_steps: L
 
 
 def prepare_retrieved_graph_visualization(triples: List[str]) -> Dict:
-    """Prepare retrieved knowledge visualization"""
-    nodes = []
-    links = []
-    node_set = set()
+    """Prepare retrieved knowledge visualization in graph module format."""
 
-    for triple in triples[:10]:
+    def _split_triple_content(content: str) -> List[str]:
+        parts = []
+        current = []
+        bracket_depth = 0
+        paren_depth = 0
+
+        for ch in content:
+            if ch == "[":
+                bracket_depth += 1
+            elif ch == "]" and bracket_depth > 0:
+                bracket_depth -= 1
+            elif ch == "(":
+                paren_depth += 1
+            elif ch == ")" and paren_depth > 0:
+                paren_depth -= 1
+
+            if ch == "," and bracket_depth == 0 and paren_depth == 0 and len(parts) < 2:
+                parts.append("".join(current).strip())
+                current = []
+                continue
+            current.append(ch)
+
+        if current:
+            parts.append("".join(current).strip())
+        return parts
+
+    def _parse_entity(raw: str) -> tuple[str, str]:
+        text = str(raw or "").strip()
+        meta_blocks = re.findall(r"\[([^\]]+)\]", text)
+        schema_type = "entity"
+        for block in meta_blocks:
+            m = re.search(r"schema_type:\s*([^,\]]+)", block)
+            if m:
+                schema_type = m.group(1).strip()
+                break
+
+        clean_name = re.sub(r"\s*\[[^\]]*\]\s*", " ", text).strip()
+        clean_name = re.sub(r"\s+", " ", clean_name)
+        return clean_name, schema_type or "entity"
+
+    def _normalize_node_size(category: str) -> int:
+        cat = str(category or "").strip().lower()
+        if cat in {"论文", "paper"}:
+            return 30
+        if cat in {"作者", "person"}:
+            return 26
+        if cat in {"机构", "organization"}:
+            return 24
+        return 22
+
+    color_pool = [
+        "#60a5fa", "#34d399", "#f59e0b", "#a78bfa", "#f472b6",
+        "#22d3ee", "#f87171", "#84cc16", "#38bdf8", "#e879f9",
+    ]
+
+    node_map: Dict[str, Dict] = {}
+    links = []
+    link_seen = set()
+    category_order = []
+
+    def _ensure_category(category_name: str):
+        if category_name not in category_order:
+            category_order.append(category_name)
+
+    for triple in triples or []:
+        source = relation = target = None
         try:
-            if triple.startswith('[') and triple.endswith(']'):
+            # Format 1: legacy list-like string ['h','r','t']
+            if isinstance(triple, str) and triple.startswith("[") and triple.endswith("]"):
                 try:
                     parts = ast.literal_eval(triple)
                 except Exception:
-                    continue
-                if len(parts) == 3:
-                    source, relation, target = parts
+                    parts = None
+                if isinstance(parts, (list, tuple)) and len(parts) == 3:
+                    source, relation, target = str(parts[0]), str(parts[1]), str(parts[2])
 
-                    for entity in [source, target]:
-                        if entity not in node_set:
-                            node_set.add(entity)
-                            nodes.append({
-                                "id": str(entity),
-                                "name": str(entity)[:20],
-                                "category": "entity",
-                                "symbolSize": 20
-                            })
+            # Format 2: current "(h [props], r, t [props]) [score: x]"
+            if source is None and isinstance(triple, str):
+                normalized = re.sub(r"\s*\[score:\s*[-+]?\d*\.?\d+\]\s*$", "", triple.strip())
+                if normalized.startswith("(") and normalized.endswith(")"):
+                    body = normalized[1:-1].strip()
+                    fields = _split_triple_content(body)
+                    if len(fields) >= 3:
+                        source, relation, target = fields[0], fields[1], fields[2]
 
-                    links.append({
-                        "source": str(source),
-                        "target": str(target),
-                        "name": str(relation)
-                    })
-        except:
+            if not (source and relation and target):
+                continue
+
+            src_name, src_category = _parse_entity(source)
+            tgt_name, tgt_category = _parse_entity(target)
+            rel_name = str(relation).strip()
+            if not src_name or not tgt_name or not rel_name:
+                continue
+
+            for node_name, node_category in [(src_name, src_category), (tgt_name, tgt_category)]:
+                if node_name not in node_map:
+                    node_map[node_name] = {
+                        "id": node_name,
+                        "name": node_name[:20],
+                        "category": node_category,
+                        "symbolSize": _normalize_node_size(node_category),
+                    }
+                elif node_map[node_name].get("category") == "entity" and node_category != "entity":
+                    node_map[node_name]["category"] = node_category
+                    node_map[node_name]["symbolSize"] = _normalize_node_size(node_category)
+                _ensure_category(node_map[node_name]["category"])
+
+            link_key = (src_name, rel_name, tgt_name)
+            if link_key in link_seen:
+                continue
+            link_seen.add(link_key)
+            links.append({
+                "source": src_name,
+                "target": tgt_name,
+                "name": rel_name,
+            })
+        except Exception:
             continue
 
+    categories = []
+    for idx, category in enumerate(category_order):
+        categories.append({
+            "name": category,
+            "itemStyle": {"color": color_pool[idx % len(color_pool)]},
+        })
+
     return {
-        "nodes": nodes,
+        "nodes": list(node_map.values()),
         "links": links,
-        "categories": [{"name": "entity", "itemStyle": {"color": "#95de64"}}]
+        "categories": categories or [{"name": "entity", "itemStyle": {"color": "#60a5fa"}}],
     }
 
 

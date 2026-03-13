@@ -36,6 +36,9 @@ def load_graph_from_json(input_path: str) -> nx.MultiDiGraph:
         start_node_data = rel["start_node"]
         end_node_data = rel["end_node"]
         relation = rel["relation"]
+        edge_properties = rel.get("edge_properties", {})
+        if not isinstance(edge_properties, dict):
+            edge_properties = {}
         
         # Create unique key for start node - ensure name is a string
         start_name = start_node_data["properties"].get("name", "")
@@ -106,7 +109,7 @@ def load_graph_from_json(input_path: str) -> nx.MultiDiGraph:
         # Add edge
         start_id = node_mapping[start_key]
         end_id = node_mapping[end_key]
-        graph.add_edge(start_id, end_id, relation=relation)
+        graph.add_edge(start_id, end_id, relation=relation, **edge_properties)
     
     return graph
 
@@ -147,6 +150,9 @@ def save_graph_to_json(graph: nx.MultiDiGraph, output_path: str):
                 "properties": v_data["properties"],
             },
         }
+        edge_properties = {k: v for k, v in data.items() if k != "relation"}
+        if edge_properties:
+            relationship["edge_properties"] = edge_properties
         output.append(relationship)
     
     with open(output_path, 'w', encoding='utf-8') as f:

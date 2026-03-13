@@ -35,10 +35,17 @@ class ConstructionConfig:
     datasets_no_chunk: list = None
     chunk_size: int = 1000
     overlap: int = 200
+    cross_doc_enabled: bool = True
+    batch_size_docs: int = 24
+    token_budget_per_batch: int = 12000
+    bridge_relations: list = None
+    prompt_version: str = "v1"
     
     def __post_init__(self):
         if self.datasets_no_chunk is None:
             self.datasets_no_chunk = ["hotpot"]
+        if self.bridge_relations is None:
+            self.bridge_relations = ["扩展", "对比", "复用", "同任务不同方法", "提出", "发表于"]
 
 @dataclass
 class TreeCommConfig:

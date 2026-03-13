@@ -2,8 +2,11 @@ import json
 import os
 import threading
 import time
+import hashlib
+import re
 from concurrent import futures
-from typing import Any, Dict, List, Tuple
+from collections import defaultdict
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 import nanoid
 import networkx as nx
@@ -30,6 +33,18 @@ class KTBuilder:
         self.llm_client = call_llm_api.LLMCompletionCall()
         self.all_chunks = {}
         self.mode = mode or config.construction.mode
+        self.doc_meta_by_chunk_id: Dict[str, Dict[str, Any]] = {}
+        self._entity_name_index: Dict[Tuple[str, str], str] = {}
+        self.bridge_cache_dir = os.path.join("output", "construction_cache", self.dataset_name)
+        os.makedirs(self.bridge_cache_dir, exist_ok=True)
+        self.cross_doc_stats = {
+            "cross_doc_enabled": bool(getattr(self.config.construction, "cross_doc_enabled", True)),
+            "bridge_batches_total": 0,
+            "bridge_batches_cached": 0,
+            "bridge_batches_failed": 0,
+            "bridge_edges_added": 0,
+            "bridge_edges_fallback": 0,
+        }
 
     def load_schema(self, schema_path) -> Dict[str, Any]:
         try:
@@ -38,19 +53,17 @@ class KTBuilder:
                 return schema
         except FileNotFoundError:
             return dict()
-
-    # 2. 优化论文元数据提取逻辑： 这里是抽取环节
+    # 2. 优化论文元数据提取逻辑：这里是抽取环节
     def _generate_llm_input(self, chunk: Dict) -> str:
         """
-        核心修改：将结构化的论文JSON转换为LLM能够理解的字符串格式。
-        用于图谱构建（包含全部元数据）。
+        将结构化的论文 JSON 转为 LLM 易理解的字符串格式，
+        用于图谱构建（包含完整元数据）。
         """
         if not isinstance(chunk, dict):
             return str(chunk)
 
-        # 兼容你的数据结构
-        # chunk 这里已经是包含 "meta" 的字典，或者已经是 meta 字典（取决于 chunk_text 的处理）
-        # 统一处理逻辑
+        # 兼容数据结构：
+        # chunk 可能是包含 "meta" 的字典，也可能本身就是 meta 字典
         data_source = chunk.get("meta", chunk)
 
         title = data_source.get("title", "")
@@ -67,41 +80,32 @@ class KTBuilder:
             f"机构: {organ}\n"
             f"来源: {source}\n"
             f"关键词: {keywords}\n"
-            f"摘要: {abstract}"
+            f"摘要: {abstract}\n"
             f"年份: {year}\n"
         )
         return prompt_text
 
-    # 3. chunk_text  构建chunk的地方 确保 ID 始终是字符串
     def chunk_text(self, doc: Dict) -> Tuple[List[Dict], Dict[str, Dict]]:
         """
-        核心修改：处理特定的论文JSON结构。
-        Chunk保存逻辑：只保留 Title + Abstract (用于检索)。
+        处理论文 JSON 结构。
+        Chunk 保存逻辑：仅保留 Title + Abstract（用于检索）。
         """
-        # 1. 提取 ID
         doc_id = str(doc.get("id", nanoid.generate(size=8)))
 
-        # 2. 提取 Meta 信息
         meta = doc.get("meta", {})
         title = meta.get("title", "")
         abstract = meta.get("abstract", "")
-
-        # 3. 构建用于检索的 Chunk 文本 (Title + Abstract)
         chunk_content_text = f"Title: {title}\nAbstract: {abstract}"
-
-        # 4. 构建传递给图构建的对象
-        # 注意：这里我们保留原始的完整 doc 结构，以便 _generate_llm_input 能提取作者和机构
-        # 但在 all_chunks 中我们保存纯文本，供后续检索使用
 
         chunk = {
             "id": doc_id,
-            "text": chunk_content_text,  # 检索用的文本
-            "meta": meta  # 保留完整元数据供图构建使用
+            "text": chunk_content_text,
+            "meta": meta,
         }
 
         with self.lock:
-            # save_chunks_to_file 会用到这个字典
             self.all_chunks[doc_id] = chunk_content_text
+            self.doc_meta_by_chunk_id[doc_id] = meta
 
         return [chunk], {doc_id: chunk}
 
@@ -207,24 +211,119 @@ class KTBuilder:
             logger.error(f"JSON Repair failed: {e}")
             return None
 
+    def _normalize_entity_name(self, name: Any) -> str:
+        """规范化实体名，便于同名去重与索引。"""
+        text = str(name or "").strip()
+        text = re.sub(r"\s+", " ", text)
+        return text.lower()
+
+    def _normalize_relation_name(self, relation: Any) -> str:
+        """
+        关系词最小归一化：保留原中文关系，仅做必要同义合并。
+        不做中文关系英文化，避免语义漂移。
+        """
+        raw = str(relation or "").strip()
+        if not raw:
+            return raw
+
+        synonym_map = {
+            "提出了": "提出",
+            "提出的": "提出",
+            "发表于于": "发表于",
+            "发布于": "发表于",
+            "应用于": "应用于",
+            "用于": "应用于",
+            "基于": "基于",
+        }
+        return synonym_map.get(raw, raw)
+
+    def _is_paper_schema_type(self, schema_type: Any) -> bool:
+        """识别论文节点类型，兼容中文与英文。"""
+        text = str(schema_type or "").strip().lower()
+        return text in {"论文", "paper"}
+
+    def _get_node_schema_type(self, node_id: str) -> str:
+        props = self.graph.nodes[node_id].get("properties", {})
+        if not isinstance(props, dict):
+            return ""
+        return str(props.get("schema_type", "")).strip()
+
+    def _get_node_chunk_id(self, node_id: str) -> str:
+        props = self.graph.nodes[node_id].get("properties", {})
+        if not isinstance(props, dict):
+            return ""
+        chunk_id = props.get("chunk_id", props.get("chunk id", ""))
+        return str(chunk_id).strip() if chunk_id is not None else ""
+
+    def _register_entity_index(self, entity_name: Any, node_id: str, entity_type: Any = None):
+        name_key = self._normalize_entity_name(entity_name)
+        if not name_key:
+            return
+        type_key = str(entity_type or "").strip().lower()
+        self._entity_name_index[(name_key, type_key)] = node_id
+        # 同名无类型索引，便于兜底检索
+        self._entity_name_index[(name_key, "")] = node_id
+
+    def _lookup_entity_node_id(self, entity_name: Any, entity_type: Any = None) -> Optional[str]:
+        name_key = self._normalize_entity_name(entity_name)
+        if not name_key:
+            return None
+        type_key = str(entity_type or "").strip().lower()
+        if type_key:
+            exact = self._entity_name_index.get((name_key, type_key))
+            if exact:
+                return exact
+        return self._entity_name_index.get((name_key, ""))
+
+    def _add_edge_with_metadata(
+        self,
+        src_id: str,
+        tgt_id: str,
+        relation: str,
+        relation_origin: str,
+        confidence: float,
+        evidence_chunk_ids: Optional[List[str]] = None,
+        source_paper_ids: Optional[List[str]] = None,
+        reason: str = "",
+    ):
+        """统一写边并附加可选元数据，保证旧读取路径兼容。"""
+        edge_payload = {
+            "relation": self._normalize_relation_name(relation),
+            "relation_origin": relation_origin,
+            "confidence": float(confidence),
+            "evidence_chunk_ids": sorted({str(x) for x in (evidence_chunk_ids or []) if str(x)}),
+            "source_paper_ids": sorted({str(x) for x in (source_paper_ids or []) if str(x)}),
+        }
+        if reason:
+            edge_payload["reason"] = str(reason)
+        self.graph.add_edge(src_id, tgt_id, **edge_payload)
+
     def _find_or_create_entity(self, entity_name: str, chunk_id: int, nodes_to_add: list,
                                entity_type: str = None) -> str:
         """Find existing entity or create a new one, returning the entity node ID."""
         with self.lock:
-            entity_node_id = next(
-                (
-                    n
-                    for n, d in self.graph.nodes(data=True)
-                    if d.get("label") == "entity" and d["properties"]["name"] == entity_name
-                ),
-                None,
-            )
+            entity_node_id = self._lookup_entity_node_id(entity_name, entity_type)
+            if not entity_node_id:
+                entity_node_id = next(
+                    (
+                        n
+                        for n, d in self.graph.nodes(data=True)
+                        if d.get("label") == "entity" and d["properties"]["name"] == entity_name
+                    ),
+                    None,
+                )
 
             if not entity_node_id:
                 entity_node_id = f"entity_{self.node_counter}"
                 properties = {"name": entity_name, "chunk id": chunk_id}
                 if entity_type:
                     properties["schema_type"] = entity_type
+                if self._is_paper_schema_type(entity_type):
+                    aliases = [str(entity_name)]
+                    title = self.doc_meta_by_chunk_id.get(str(chunk_id), {}).get("title")
+                    if title and str(title) not in aliases:
+                        aliases.append(str(title))
+                    properties["aliases"] = aliases
 
                 nodes_to_add.append((
                     entity_node_id,
@@ -234,7 +333,10 @@ class KTBuilder:
                         "level": 2
                     }
                 ))
+                self._register_entity_index(entity_name, entity_node_id, entity_type)
                 self.node_counter += 1
+            else:
+                self._register_entity_index(entity_name, entity_node_id, entity_type)
 
         return entity_node_id
 
@@ -303,7 +405,7 @@ class KTBuilder:
         llm_response = self.extract_with_llm(prompt)
 
         # Validate and parse response
-        parsed_response = self._validate_and_parse_llm_response(prompt, llm_response)
+        parsed_response = self._validate_and_parse_llm_response(llm_response)
         if not parsed_response:
             return
 
@@ -323,18 +425,28 @@ class KTBuilder:
                 self.graph.add_node(node_id, **node_data)
 
             for u, v, relation in all_edges:
-                self.graph.add_edge(u, v, relation=relation)
+                self._add_edge_with_metadata(
+                    u,
+                    v,
+                    relation,
+                    relation_origin="doc_local",
+                    confidence=0.7,
+                    evidence_chunk_ids=[str(id)],
+                    source_paper_ids=[str(id)],
+                )
 
     def _find_or_create_entity_direct(self, entity_name: str, chunk_id: int, entity_type: str = None) -> str:
         """Find existing entity or create a new one directly in graph (for agent mode)."""
-        entity_node_id = next(
-            (
-                n
-                for n, d in self.graph.nodes(data=True)
-                if d["properties"].get("name") == entity_name
-            ),
-            None,
-        )
+        entity_node_id = self._lookup_entity_node_id(entity_name, entity_type)
+        if not entity_node_id:
+            entity_node_id = next(
+                (
+                    n
+                    for n, d in self.graph.nodes(data=True)
+                    if d["properties"].get("name") == entity_name
+                ),
+                None,
+            )
 
         if not entity_node_id:
             entity_node_id = f"entity_{self.node_counter}"
@@ -347,18 +459,29 @@ class KTBuilder:
             # properties = {"name": entity_name, "chunk id": chunk_id,"schema_type": entity_type}
             if entity_type:
                 properties["schema_type"] = entity_type
+            if self._is_paper_schema_type(entity_type):
+                aliases = [str(entity_name)]
+                title = self.doc_meta_by_chunk_id.get(str(chunk_id), {}).get("title")
+                if title and str(title) not in aliases:
+                    aliases.append(str(title))
+                properties["aliases"] = aliases
             self.graph.add_node(
                 entity_node_id,
                 label="entity",
                 properties=properties,
                 level=2
             )
+            self._register_entity_index(entity_name, entity_node_id, entity_type)
             self.node_counter += 1
         else:
             # 如果节点已存在但标签是通用的，尝试更新它
-            if entity_type and "schema_type" not in self.graph.nodes[entity_node_id]["properties"]:
-                with self.lock:
-                    self.graph.nodes[entity_node_id]["properties"]["schema_type"] = entity_type
+            node_props = self.graph.nodes[entity_node_id]["properties"]
+            if entity_type and "schema_type" not in node_props:
+                node_props["schema_type"] = entity_type
+            aliases = node_props.setdefault("aliases", [])
+            if entity_name not in aliases:
+                aliases.append(entity_name)
+            self._register_entity_index(entity_name, entity_node_id, node_props.get("schema_type", entity_type))
 
         return entity_node_id
 
@@ -381,7 +504,15 @@ class KTBuilder:
 
                 entity_type = entity_types.get(entity) if entity_types else None
                 entity_node_id = self._find_or_create_entity_direct(entity, chunk_id, entity_type)
-                self.graph.add_edge(entity_node_id, attr_node_id, relation="has_attribute")
+                self._add_edge_with_metadata(
+                    entity_node_id,
+                    attr_node_id,
+                    "has_attribute",
+                    relation_origin="doc_local",
+                    confidence=0.7,
+                    evidence_chunk_ids=[str(chunk_id)],
+                    source_paper_ids=[str(chunk_id)],
+                )
 
     def _process_triples_agent(self, extracted_triples: list, chunk_id: int, entity_types: dict = None):
         """Process extracted triples in agent mode (direct graph operations)."""
@@ -399,7 +530,15 @@ class KTBuilder:
             subj_node_id = self._find_or_create_entity_direct(subj, chunk_id, subj_type)
             obj_node_id = self._find_or_create_entity_direct(obj, chunk_id, obj_type)
 
-            self.graph.add_edge(subj_node_id, obj_node_id, relation=pred)
+            self._add_edge_with_metadata(
+                subj_node_id,
+                obj_node_id,
+                pred,
+                relation_origin="doc_local",
+                confidence=0.75,
+                evidence_chunk_ids=[str(chunk_id)],
+                source_paper_ids=[str(chunk_id)],
+            )
 
     def process_level1_level2_agent(self, chunk: Dict, chunk_id: str):
         """核心处理流程"""
@@ -443,7 +582,15 @@ class KTBuilder:
                                             label="attribute",
                                             properties={"name": safe_attr, "chunk_id": chunk_id},
                                             level=1)
-                        self.graph.add_edge(entity_id, attr_id, relation="has_attribute")
+                        self._add_edge_with_metadata(
+                            entity_id,
+                            attr_id,
+                            "has_attribute",
+                            relation_origin="doc_local",
+                            confidence=0.7,
+                            evidence_chunk_ids=[str(chunk_id)],
+                            source_paper_ids=[str(chunk_id)],
+                        )
                         self.node_counter += 1
 
             # 6. 处理三元组 (Level 2)
@@ -460,7 +607,15 @@ class KTBuilder:
                 # 传入具体的类型以确保 properties.schema_type 被正确填充
                 src_id = self._find_or_create_entity_direct(src, chunk_id, src_type)
                 tgt_id = self._find_or_create_entity_direct(tgt, chunk_id, tgt_type)
-                self.graph.add_edge(src_id, tgt_id, relation=rel)
+                self._add_edge_with_metadata(
+                    src_id,
+                    tgt_id,
+                    rel,
+                    relation_origin="doc_local",
+                    confidence=0.75,
+                    evidence_chunk_ids=[str(chunk_id)],
+                    source_paper_ids=[str(chunk_id)],
+                )
         #
         # with self.lock:
         #     # 防御性处理：确保属性值不是 dict (防止可视化报错)
@@ -548,6 +703,311 @@ class KTBuilder:
         except Exception as e:
             logger.error(f"Failed to update schema for dataset '{self.dataset_name}': {type(e).__name__}: {e}")
 
+    def _build_paper_node_indexes(self) -> Tuple[Dict[str, str], Dict[str, str]]:
+        paper_by_chunk: Dict[str, str] = {}
+        paper_by_title: Dict[str, str] = {}
+        for node_id, node_data in self.graph.nodes(data=True):
+            if not self._is_paper_schema_type(self._get_node_schema_type(node_id)):
+                continue
+            props = node_data.get("properties", {})
+            if not isinstance(props, dict):
+                continue
+            title = str(props.get("name", "")).strip()
+            if title:
+                paper_by_title[self._normalize_entity_name(title)] = node_id
+            aliases = props.get("aliases", []) or []
+            if isinstance(aliases, list):
+                for alias in aliases:
+                    alias_text = str(alias).strip()
+                    if alias_text:
+                        paper_by_title[self._normalize_entity_name(alias_text)] = node_id
+            chunk_id = self._get_node_chunk_id(node_id)
+            if chunk_id:
+                paper_by_chunk[str(chunk_id)] = node_id
+        return paper_by_chunk, paper_by_title
+
+    def _extract_keywords(self, raw_keywords: Any) -> List[str]:
+        if isinstance(raw_keywords, list):
+            return [str(x).strip() for x in raw_keywords if str(x).strip()]
+        text = str(raw_keywords or "")
+        parts = re.split(r"[;,，；|/\\\\]+", text)
+        return [x.strip() for x in parts if x.strip()]
+
+    def _build_document_fact_units(self, documents: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        paper_by_chunk, paper_by_title = self._build_paper_node_indexes()
+        units: List[Dict[str, Any]] = []
+        for doc in documents:
+            doc_id = str(doc.get("id", ""))
+            meta = doc.get("meta", doc if isinstance(doc, dict) else {})
+            title = str(meta.get("title", "")).strip()
+            title_key = self._normalize_entity_name(title)
+            paper_node = paper_by_chunk.get(doc_id) or paper_by_title.get(title_key)
+            keywords = self._extract_keywords(meta.get("keywords", ""))
+            summary = str(meta.get("abstract", "")).strip()[:220]
+
+            facts: List[str] = []
+            if paper_node and paper_node in self.graph.nodes:
+                for _, tgt, edge_data in self.graph.out_edges(paper_node, data=True):
+                    relation = edge_data.get("relation", "")
+                    tgt_name = self.graph.nodes[tgt].get("properties", {}).get("name", tgt)
+                    if relation:
+                        facts.append(f"{title} --{relation}--> {tgt_name}")
+                    if len(facts) >= 8:
+                        break
+                if len(facts) < 8:
+                    for src, _, edge_data in self.graph.in_edges(paper_node, data=True):
+                        relation = edge_data.get("relation", "")
+                        src_name = self.graph.nodes[src].get("properties", {}).get("name", src)
+                        if relation:
+                            facts.append(f"{src_name} --{relation}--> {title}")
+                        if len(facts) >= 8:
+                            break
+
+            units.append(
+                {
+                    "paper_id": doc_id,
+                    "title": title,
+                    "keywords": keywords,
+                    "summary": summary,
+                    "facts": facts,
+                }
+            )
+        return units
+
+    def _cluster_fact_units(self, units: List[Dict[str, Any]]) -> List[List[Dict[str, Any]]]:
+        clusters: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+        for unit in units:
+            keywords = unit.get("keywords", []) or []
+            key = str(keywords[0]).strip().lower() if keywords else "misc"
+            clusters[key].append(unit)
+        return [cluster for _, cluster in sorted(clusters.items(), key=lambda x: len(x[1]), reverse=True)]
+
+    def _split_batches_by_budget(self, units: List[Dict[str, Any]]) -> List[List[Dict[str, Any]]]:
+        batch_size = max(1, int(getattr(self.config.construction, "batch_size_docs", 24)))
+        token_budget = max(500, int(getattr(self.config.construction, "token_budget_per_batch", 12000)))
+
+        batches: List[List[Dict[str, Any]]] = []
+        current_batch: List[Dict[str, Any]] = []
+
+        def estimate_tokens(items: List[Dict[str, Any]]) -> int:
+            return self.token_cal(json.dumps(items, ensure_ascii=False))
+
+        for unit in units:
+            if len(current_batch) >= batch_size:
+                batches.append(current_batch)
+                current_batch = []
+
+            trial = current_batch + [unit]
+            if current_batch and estimate_tokens(trial) > token_budget:
+                batches.append(current_batch)
+                current_batch = [unit]
+            else:
+                current_batch = trial
+
+        if current_batch:
+            batches.append(current_batch)
+        return batches
+
+    def _resolve_bridge_entity_node(self, entity_name: str, default_chunk_id: str = "") -> str:
+        entity_name = str(entity_name or "").strip()
+        existing = self._lookup_entity_node_id(entity_name, None)
+        if existing:
+            return existing
+
+        for node_id, node_data in self.graph.nodes(data=True):
+            if node_data.get("properties", {}).get("name") == entity_name:
+                self._register_entity_index(entity_name, node_id, self._get_node_schema_type(node_id))
+                return node_id
+
+        paper_titles = {
+            self._normalize_entity_name(meta.get("title", ""))
+            for meta in self.doc_meta_by_chunk_id.values()
+        }
+        entity_type = "论文" if self._normalize_entity_name(entity_name) in paper_titles else None
+        return self._find_or_create_entity_direct(entity_name, default_chunk_id or "unknown", entity_type)
+
+    def _get_cross_doc_prompt(self, batch_facts: List[Dict[str, Any]]) -> str:
+        bridge_relations = getattr(self.config.construction, "bridge_relations", [])
+        payload = json.dumps(batch_facts, ensure_ascii=False, indent=2)
+        try:
+            return self.config.get_prompt_formatted(
+                "construction",
+                "cross_doc_agent",
+                bridge_relations=", ".join(bridge_relations),
+                batch_facts=payload,
+            )
+        except Exception:
+            return (
+                "只返回 JSON，主键为 cross_doc_triples。"
+                "每项字段：head, relation, tail, source_paper_ids, evidence_chunk_ids, confidence, reason。\n"
+                f"允许关系：{', '.join(bridge_relations)}\n"
+                f"批次事实：\n{payload}"
+            )
+
+    def _load_bridge_cache(self, cache_key: str) -> Optional[Dict[str, Any]]:
+        cache_path = os.path.join(self.bridge_cache_dir, f"{cache_key}.json")
+        if not os.path.exists(cache_path):
+            return None
+        try:
+            with open(cache_path, "r", encoding="utf-8") as f:
+                payload = json.load(f)
+            self.cross_doc_stats["bridge_batches_cached"] += 1
+            return payload.get("parsed")
+        except Exception:
+            return None
+
+    def _save_bridge_cache(self, cache_key: str, raw_response: str, parsed: Dict[str, Any]) -> None:
+        cache_path = os.path.join(self.bridge_cache_dir, f"{cache_key}.json")
+        payload = {
+            "raw": raw_response,
+            "parsed": parsed,
+            "timestamp": time.time(),
+            "prompt_version": getattr(self.config.construction, "prompt_version", "v1"),
+        }
+        with open(cache_path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, indent=2)
+
+    def _fallback_cross_doc_triples(self, batch_facts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        fallback: List[Dict[str, Any]] = []
+        relations = getattr(self.config.construction, "bridge_relations", []) or []
+        dense_relation = relations[3] if len(relations) > 3 else (relations[0] if relations else "同任务不同方法")
+        sparse_relation = relations[1] if len(relations) > 1 else (relations[0] if relations else "对比")
+
+        for i in range(len(batch_facts)):
+            for j in range(i + 1, len(batch_facts)):
+                left = batch_facts[i]
+                right = batch_facts[j]
+                left_kw = set(k.lower() for k in left.get("keywords", []))
+                right_kw = set(k.lower() for k in right.get("keywords", []))
+                overlap = left_kw.intersection(right_kw)
+                if not overlap:
+                    continue
+                relation = dense_relation if len(overlap) >= 2 else sparse_relation
+                fallback.append(
+                    {
+                        "head": left.get("title", ""),
+                        "relation": relation,
+                        "tail": right.get("title", ""),
+                        "source_paper_ids": [left.get("paper_id", ""), right.get("paper_id", "")],
+                        "evidence_chunk_ids": [left.get("paper_id", ""), right.get("paper_id", "")],
+                        "confidence": 0.55,
+                        "reason": f"keyword_overlap={','.join(list(overlap)[:3])}",
+                    }
+                )
+                if len(fallback) >= 4:
+                    return fallback
+        return fallback
+
+    def _request_cross_doc_triples(self, batch_facts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        payload_str = json.dumps(batch_facts, ensure_ascii=False, sort_keys=True)
+        prompt_version = getattr(self.config.construction, "prompt_version", "v1")
+        cache_key = hashlib.sha1(
+            f"{self.dataset_name}|cross_doc|{prompt_version}|{payload_str}".encode("utf-8")
+        ).hexdigest()
+
+        cached = self._load_bridge_cache(cache_key)
+        if isinstance(cached, dict):
+            triples = cached.get("cross_doc_triples", [])
+            if isinstance(triples, list):
+                return triples
+
+        prompt = self._get_cross_doc_prompt(batch_facts)
+        raw_response = self.extract_with_llm(prompt)
+        parsed = self._validate_and_parse_llm_response(raw_response) or {}
+        self._save_bridge_cache(cache_key, str(raw_response), parsed)
+        triples = parsed.get("cross_doc_triples", [])
+        return triples if isinstance(triples, list) else []
+
+    def _apply_cross_doc_triples(self, triples: List[Dict[str, Any]], fallback: bool = False) -> int:
+        if not triples:
+            return 0
+        allowed_relations: Set[str] = set(getattr(self.config.construction, "bridge_relations", []))
+        added = 0
+
+        for item in triples:
+            if isinstance(item, list) and len(item) >= 3:
+                item = {
+                    "head": item[0],
+                    "relation": item[1],
+                    "tail": item[2],
+                    "source_paper_ids": [],
+                    "evidence_chunk_ids": [],
+                    "confidence": 0.55 if fallback else 0.65,
+                    "reason": "list_format",
+                }
+            if not isinstance(item, dict):
+                continue
+
+            head = str(item.get("head", "")).strip()
+            tail = str(item.get("tail", "")).strip()
+            relation = self._normalize_relation_name(item.get("relation", ""))
+            if not head or not tail or not relation or head == tail:
+                continue
+            if allowed_relations and relation not in allowed_relations:
+                continue
+
+            source_paper_ids = [str(x) for x in item.get("source_paper_ids", []) if str(x)]
+            evidence_chunk_ids = [str(x) for x in item.get("evidence_chunk_ids", []) if str(x)]
+            default_chunk_id = source_paper_ids[0] if source_paper_ids else (
+                evidence_chunk_ids[0] if evidence_chunk_ids else ""
+            )
+
+            head_id = self._resolve_bridge_entity_node(head, default_chunk_id=default_chunk_id)
+            tail_id = self._resolve_bridge_entity_node(tail, default_chunk_id=default_chunk_id)
+            if not head_id or not tail_id or head_id == tail_id:
+                continue
+
+            self._add_edge_with_metadata(
+                head_id,
+                tail_id,
+                relation,
+                relation_origin="cross_doc",
+                confidence=float(item.get("confidence", 0.55 if fallback else 0.65)),
+                evidence_chunk_ids=evidence_chunk_ids,
+                source_paper_ids=source_paper_ids,
+                reason=str(item.get("reason", "")),
+            )
+            added += 1
+        return added
+
+    def _build_cross_document_bridges(self, documents: List[Dict[str, Any]]) -> None:
+        if not getattr(self.config.construction, "cross_doc_enabled", True):
+            return
+
+        fact_units = self._build_document_fact_units(documents)
+        if len(fact_units) < 2:
+            return
+
+        total_added = 0
+        for cluster_units in self._cluster_fact_units(fact_units):
+            for batch_facts in self._split_batches_by_budget(cluster_units):
+                if len(batch_facts) < 2:
+                    continue
+                self.cross_doc_stats["bridge_batches_total"] += 1
+                try:
+                    triples = self._request_cross_doc_triples(batch_facts)
+                    added = self._apply_cross_doc_triples(triples, fallback=False)
+                    if added == 0:
+                        fallback_triples = self._fallback_cross_doc_triples(batch_facts)
+                        fallback_added = self._apply_cross_doc_triples(fallback_triples, fallback=True)
+                        total_added += fallback_added
+                        self.cross_doc_stats["bridge_edges_fallback"] += fallback_added
+                    else:
+                        total_added += added
+                except Exception as e:
+                    self.cross_doc_stats["bridge_batches_failed"] += 1
+                    logger.warning(f"Cross-doc bridge batch failed: {type(e).__name__}: {e}")
+
+        self.cross_doc_stats["bridge_edges_added"] += total_added
+        logger.info(
+            "Cross-doc bridge summary: "
+            f"batches={self.cross_doc_stats['bridge_batches_total']} "
+            f"cached={self.cross_doc_stats['bridge_batches_cached']} "
+            f"failed={self.cross_doc_stats['bridge_batches_failed']} "
+            f"edges_added={self.cross_doc_stats['bridge_edges_added']} "
+            f"fallback_edges={self.cross_doc_stats['bridge_edges_fallback']}"
+        )
+
     def process_level4(self):
         """Process communities using Tree-Comm algorithm"""
         level2_nodes = [n for n, d in self.graph.nodes(data=True) if d['level'] == 2]
@@ -578,7 +1038,13 @@ class KTBuilder:
                 for kw in kw_nodes:
                     kw_name = self.graph.nodes[kw]['properties']['name'].lower()
                     if kw_name in comm_name or comm_name in kw_name:
-                        self.graph.add_edge(kw, comm, relation="describes")
+                        self._add_edge_with_metadata(
+                            kw,
+                            comm,
+                            "describes",
+                            relation_origin="derived",
+                            confidence=0.6,
+                        )
 
     # 修复 process_document 中的 ID 匹配崩溃
     def process_document(self, doc: Dict[str, Any]) -> None:
@@ -641,8 +1107,14 @@ class KTBuilder:
         logger.info(f"Successfully processed: {processed_count}/{total_docs} documents")
         logger.info(f"Failed: {failed_count} documents")
 
-        logger.info(f"🚀🚀🚀🚀 {'Processing Level 3 and 4':^20} 🚀🚀🚀🚀")
-        logger.info(f"{'➖' * 20}")
+        if getattr(self.config.construction, "cross_doc_enabled", True):
+            logger.info("Starting cross-document bridge stage...")
+            bridge_start = time.time()
+            self._build_cross_document_bridges(documents)
+            logger.info(f"Cross-document bridge stage finished in {time.time() - bridge_start:.2f}s")
+
+        logger.info(f"{'Processing Level 3 and 4':^30}")
+        logger.info("-" * 20)
         self.triple_deduplicate()
         self.process_level4()
 
@@ -680,6 +1152,9 @@ class KTBuilder:
                     "properties": v_data["properties"],
                 },
             }
+            edge_properties = {k: v for k, v in data.items() if k != "relation"}
+            if edge_properties:
+                relationship["edge_properties"] = edge_properties
             output.append(relationship)
 
         return output
@@ -689,7 +1164,7 @@ class KTBuilder:
 
     def build_knowledge_graph(self, corpus):
         logger.info(f"========{'Start Building':^20}========")
-        logger.info(f"{'➖' * 30}")
+        logger.info("-" * 30)
 
         with open(corpus, 'r', encoding='utf-8') as f:
             documents = json_repair.load(f)
@@ -707,5 +1182,13 @@ class KTBuilder:
         with open(json_output_path, 'w', encoding='utf-8') as f:
             json.dump(output, f, ensure_ascii=False, indent=2)
         logger.info(f"Graph saved to {json_output_path}")
+
+        stats_path = f"output/graphs/{self.dataset_name}_construction_stats.json"
+        try:
+            with open(stats_path, "w", encoding="utf-8") as f:
+                json.dump(self.cross_doc_stats, f, ensure_ascii=False, indent=2)
+            logger.info(f"Construction stats saved to {stats_path}")
+        except Exception as e:
+            logger.warning(f"Failed to save construction stats: {type(e).__name__}: {e}")
 
         return output

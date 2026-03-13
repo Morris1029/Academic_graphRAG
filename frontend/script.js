@@ -3,6 +3,7 @@ let selectedFiles = [];
 let datasets = [];
 let currentDataset = null;
 let graphChart = null;
+let qaSubgraphChart = null;
 // let queryChart = null;
 let questionCount = 0;
 
@@ -933,6 +934,84 @@ function renderGraph(data) {
     graphChart.setOption(option);
 }
 
+function renderKnowledgeGraphChart(data) {
+    const chartContainer = document.getElementById('triplesChart');
+    const t = i18n[currentLang] || i18n.en;
+    if (!chartContainer) return;
+
+    if (qaSubgraphChart) {
+        qaSubgraphChart.dispose();
+    }
+    qaSubgraphChart = echarts.init(chartContainer);
+
+    const option = {
+        backgroundColor: '#13233a',
+        tooltip: {
+            trigger: 'item',
+            backgroundColor: 'rgba(10, 18, 30, 0.92)',
+            borderColor: 'rgba(125, 170, 228, 0.45)',
+            borderWidth: 1,
+            textStyle: { color: '#f4f8ff' },
+            formatter: function (params) {
+                if (params.dataType === 'node') {
+                    const d = params.data || {};
+                    let name = (d.name || '').toString().replace(/\s+/g, ' ').trim();
+                    if (name.length > 20) name = name.slice(0, 20) + '...';
+                    const category = d.category || d.type || '';
+                    return `${name || 'node'}<br/>${t.nodeTypeLabel}: ${category || 'entity'}`;
+                } else if (params.dataType === 'edge') {
+                    const rel = params.data && params.data.name ? params.data.name : '';
+                    return `${t.relationLabel}: ${rel}`;
+                }
+                return '';
+            }
+        },
+        legend: {
+            type: 'scroll',
+            bottom: 10,
+            textStyle: { color: '#dce9ff' },
+            data: (data.categories && data.categories.map(function (c) { return c.name; })) || []
+        },
+        series: [{
+            type: 'graph',
+            layout: 'force',
+            data: data.nodes || [],
+            links: data.links || [],
+            categories: data.categories || [],
+            roam: true,
+            label: {
+                show: true,
+                color: '#e8f3ff',
+                textShadowColor: 'rgba(0,0,0,0.55)',
+                textShadowBlur: 4,
+                formatter: function (p) {
+                    const d = p.data || {};
+                    let name = (d.name || '').toString().replace(/\s+/g, ' ').trim();
+                    if (name.length > 20) name = name.slice(0, 20) + '...';
+                    return name || '';
+                }
+            },
+            force: {
+                repulsion: 1000,
+                gravity: 0.1,
+                edgeLength: 120
+            },
+            lineStyle: {
+                opacity: 0.85,
+                width: 1.6,
+                color: 'rgba(144, 185, 236, 0.78)'
+            }
+        }]
+    };
+
+    qaSubgraphChart.setOption(option);
+    setTimeout(() => {
+        if (qaSubgraphChart && typeof qaSubgraphChart.resize === 'function') {
+            qaSubgraphChart.resize();
+        }
+    }, 100);
+}
+
 async function askQuestion() {
     const datasetName = document.getElementById('qaDataset').value;
     const question = document.getElementById('questionInput').value.trim();
@@ -1238,7 +1317,7 @@ function displayRetrievalDetails(result) {
     detailsHtml += '</div></div>';
     detailsContainer.innerHTML = detailsHtml;
 
-    // Render triples chart after setting HTML and ensuring container is visible
+    // Render retrieval subgraph after setting HTML and ensuring container is visible
     setTimeout(() => {
         console.log('About to render triples chart with:', result.retrieved_triples?.length || 0, 'triples');
         // Make sure the chart container is visible before initializing ECharts
@@ -1247,7 +1326,12 @@ function displayRetrievalDetails(result) {
             chartContainer.style.display = 'block';
             console.log('Chart container made visible');
         }
-        renderTriplesChart(result.retrieved_triples || []);
+        const kg = result?.visualization_data?.knowledge_graph;
+        if (kg && Array.isArray(kg.nodes) && kg.nodes.length > 0) {
+            renderKnowledgeGraphChart(kg);
+        } else {
+            renderTriplesChart(result.retrieved_triples || []);
+        }
     }, 200);
 }
 
