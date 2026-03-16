@@ -124,24 +124,19 @@ prompts:
     }}
 "
 
-    cross_doc_agent: "You are a cross-document graph synthesis assistant.\nInput is a batch of paper facts (paper_id/title/keywords/summary/facts).\nTask: infer high-value cross-paper bridges for multi-hop QA.\nRules:\n1. Return JSON only.\n2. Use only supported bridge relations: {bridge_relations}.\n3. Prefer links supported by at least two concrete facts.\n4. Keep links specific and avoid generic statements.\nOutput JSON schema:\n{\n  \"cross_doc_triples\": [\n    {\n      \"head\": \"paper_title_or_entity\",\n      \"relation\": \"bridge_relation\",\n      \"tail\": \"paper_title_or_entity\",\n      \"source_paper_ids\": [\"id1\", \"id2\"],\n      \"evidence_chunk_ids\": [\"id1\", \"id2\"],\n      \"confidence\": 0.0,\n      \"reason\": \"short reason\"\n    }\n  ]\n}\nBatch facts:\n{batch_facts}\n"
   decomposition:
-    general: "你是一个学术研究助手。你的任务是将复杂的用户问题拆解为多个可以通过图谱检索或文档阅读解决的子问题。\n\n
-     【Schema 参考】：\n{ontology}\n\n
+    general: "你是一个学术问题拆解大师。你的任务是将复杂的用户问题拆解为多个可以通过图谱检索或文档阅读解决的子问题。\n\n
+     图本体模式（Schema）：\n{ontology}\n\n
       【拆解原则】：\n
-      1. **时序拆解**：如果问题涉及发展脉络，按时间段拆解（如“2020年前”、“2020年后”）。\n
-      2. **要素拆解**：如果问题涉及综述，拆解为“使用了什么模型”、“解决了什么问题”、“效果如何”三个维度。\n
-      3. **对比拆解**：如果问题是比较A和B，拆解为“A的特点”、“B的特点”、“A与B的差异”。\n\n
+      1. 对于简单问题（1-2跳），返回原始问题作为单个子问题。\n
+      2.**时序拆解**：如果问题涉及发展脉络，按时间段拆解（如“2020年前”、“2020年后”）。\n
+      3. **要素拆解**：如果问题涉及综述，拆解为“使用了什么模型”、“解决了什么问题”、“效果如何”三个维度。\n
+      4. **对比拆解**：如果问题是比较A和B，拆解为“A的特点”、“B的特点”、“A与B的差异”。\n\n
+      5. **子问题要求**：  - 明确且专注于一个事实或关系，通过识别所有实体、关系和推理步骤\n      - 明确引用原始问题中的实体和关系\n      - 设计为检索最终答案所需的相关知识\n\
+      6. **Schema识别**：分析问题并识别所有可能涉及的schema类型\n\n
       【问题】：{question}\n\n
       请返回 JSON 对象：\n{{\n  \"sub_questions\": [\n    {{\"sub-question\": \"具体子问题1\"}},\n    {{\"sub-question\": \"具体子问题2\"}}\n  ],\n  \"involved_types\": {{\n    \"nodes\": [\"涉及的实体类型\"],\n    \"relations\": [\"涉及的关系\"]\n  }}\n}}"
-    novel: "你是一个专业的问题分解大师，请根据以下问题和图本体模式，将问题分解为2-3个子问题，并识别涉及的schema类型。\n   要求：\n   1. 每个子问题必须：\n \
-      \     - 明确且专注于一个事实或关系，通过识别所有实体、关系和推理步骤\n      - 明确引用原始问题中的实体和关系\n      - 设计为检索最终答案所需的相关知识\n\
-      \   2. 对于简单问题（1-2跳），返回原始问题作为单个子问题\n   3. 分析问题并识别所有可能涉及的schema类型\n   4. 返回一个JSON对象，包含sub_questions数组和involved_types对象。\n   \n   问题：{question}\n\
-      \   \n   图本体模式：{ontology}\n   \n   示例：\n   原始问题：\\\"智取生辰纲事件中，PERSON#1的策略为什么能够成功\\\"\n\
-      \   输出：\n   {{\n       \\\"sub_questions\\\": [\n           {{\\\"sub-question\\\": \\\"智取生辰纲中PERSON#1的策略是什么？\\\"}},\n  \
-      \           {{\\\"sub-question\\\": \\\"智取生辰纲中的PERSON、LOCATION有什么特殊属性？\\\"}}\n       ],\n       \\\"involved_types\\\": {{\n           \\\"nodes\\\": [\\\"person\\\", \\\"event\\\", \\\"location\\\"],\n           \\\"relations\\\": [\\\"策划\\\", \\\"发生地\\\"],\n           \\\"attributes\\\": [\\\"绰号\\\", \\\"职位\\\", \\\"特长\\\"]\n       }}\n   }}\n   如果是简单问题，返回原始问题作为单个子问题。\n\
-      \   原始问题：\\\"智取生辰纲事件中，PERSON#1是谁\\\"\n   输出：\n   {{\n       \\\"sub_questions\\\": [\n           {{\\\"sub-question\\\": \\\"\
-      智取生辰纲事件中，PERSON#1是谁？\\\"}}\n       ],\n       \\\"involved_types\\\": {{\n           \\\"nodes\\\": [\\\"person\\\", \\\"event\\\"],\n           \\\"relations\\\": [\\\"参与\\\"],\n           \\\"attributes\\\": [\\\"name\\\"]\n       }}\n   }}\n"
+      
   retrieval:
     general: "你是一个严谨的学术科研助手。请根据提供的【检索上下文】回答用户问题。\n\n
       【检索上下文】：\n{context}\n\n
@@ -155,24 +150,7 @@ prompts:
       5. **禁止编造**：只有在 Triples 与 Chunks 都无法支撑问题关键事实时，才回答“现有资料不足以回答”。\n\n
       【用户问题】：{question}\n\n
       【回答】：\n"
-    ircot: 'You are an expert knowledge assistant using iterative retrieval with chain-of-thought
-      reasoning.
-      Current Question: {current_query}
-      Available Knowledge Context:
-      {context}
-      Previous Thoughts: {previous_thoughts}
-      Step {step}: Please think step by step about what additional information you
-      need to answer the question completely and accurately.
-      Instructions:
-      1. Analyze the current knowledge context and the question
-      2. Think about what information might be missing or unclear
-      3. If you have enough information to answer, in the end of your response, write
-      "So the answer is:" followed by your final answer
-      4. If you need more information, in the end of your response, write a specific
-      query begin with "The new query is:" to retrieve additional relevant information
-      5. Be specific and focused in your reasoning
-      Your reasoning:
-      '
+
 retrieval:
   agent:
     enable_ircot: false
