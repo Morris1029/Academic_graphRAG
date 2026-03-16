@@ -958,7 +958,13 @@ function renderKnowledgeGraphChart(data) {
                     let name = (d.name || '').toString().replace(/\s+/g, ' ').trim();
                     if (name.length > 20) name = name.slice(0, 20) + '...';
                     const category = d.category || d.type || '';
-                    return `${name || 'node'}<br/>${t.nodeTypeLabel}: ${category || 'entity'}`;
+                    const description = (d.description || '').toString().replace(/\s+/g, ' ').trim();
+                    const parts = [`${name || 'node'}`, `${t.nodeTypeLabel}: ${category || 'entity'}`];
+                    if (description) {
+                        const shortDescription = description.length > 120 ? `${description.slice(0, 120)}...` : description;
+                        parts.push(`${t.descriptionLabel || 'Description'}: ${shortDescription}`);
+                    }
+                    return parts.join('<br/>');
                 } else if (params.dataType === 'edge') {
                     const rel = params.data && params.data.name ? params.data.name : '';
                     return `${t.relationLabel}: ${rel}`;
@@ -1580,13 +1586,57 @@ function filterKnowledgeGraphForQA(kg) {
         return { nodes: [], links: [], categories: [] };
     }
 
-    const keptNodes = (kg.nodes || []).filter((node) => {
-        const category = String((node && (node.category || node.type)) || '').trim().toLowerCase();
-        return category !== 'entity';
-    });
-    const nodeIdSet = new Set(keptNodes.map((node) => String(node.id)));
+    const links = Array.isArray(kg.links) ? kg.links : [];
+    const rawNodes = Array.isArray(kg.nodes) ? kg.nodes : [];
+    const degreeMap = new Map();
+    const componentSizeMap = new Map();
 
-    const keptLinks = (kg.links || []).filter((link) => {
+    rawNodes.forEach((node) => {
+        const nodeId = String(node?.id ?? '');
+        if (!nodeId) return;
+        const degree = Number(node?.degree ?? 0);
+        degreeMap.set(nodeId, degree);
+        const componentId = Number(node?.component_id ?? -1);
+        componentSizeMap.set(componentId, (componentSizeMap.get(componentId) || 0) + 1);
+    });
+
+    if (!degreeMap.size) {
+        links.forEach((link) => {
+            const source = String(typeof link.source === 'object' ? link.source.id : link.source);
+            const target = String(typeof link.target === 'object' ? link.target.id : link.target);
+            degreeMap.set(source, (degreeMap.get(source) || 0) + 1);
+            degreeMap.set(target, (degreeMap.get(target) || 0) + 1);
+        });
+    }
+
+    const dominantComponentId = Array.from(componentSizeMap.entries())
+        .sort((a, b) => b[1] - a[1])[0]?.[0];
+
+    const keptNodes = rawNodes.filter((node) => {
+        const category = String((node && (node.category || node.type)) || '').trim().toLowerCase();
+        const nodeId = String(node?.id ?? '');
+        const degree = Number(node?.degree ?? degreeMap.get(nodeId) ?? 0);
+        const componentId = Number(node?.component_id ?? -1);
+        const isFallbackEntity = Boolean(node?.is_fallback_entity);
+
+        if (category !== 'entity') {
+            return dominantComponentId === undefined || componentId === dominantComponentId || componentId === -1;
+        }
+
+        if (degree >= 2) {
+            return true;
+        }
+        if (!isFallbackEntity && degree >= 1) {
+            return true;
+        }
+        if (dominantComponentId !== undefined && componentId === dominantComponentId && degree >= 1) {
+            return true;
+        }
+        return false;
+    });
+
+    const nodeIdSet = new Set(keptNodes.map((node) => String(node.id)));
+    const keptLinks = links.filter((link) => {
         const source = typeof link.source === 'object' ? link.source.id : link.source;
         const target = typeof link.target === 'object' ? link.target.id : link.target;
         return nodeIdSet.has(String(source)) && nodeIdSet.has(String(target));
@@ -1598,16 +1648,15 @@ function filterKnowledgeGraphForQA(kg) {
 
     let categories = (kg.categories || []).filter((cat) => {
         const name = String((cat && cat.name) || '').trim();
-        return name && name.toLowerCase() !== 'entity' && categorySet.has(name);
+        return name && categorySet.has(name);
     });
     if (!categories.length) {
-        categories = Array.from(categorySet)
-            .filter(name => name.toLowerCase() !== 'entity')
-            .map(name => ({ name }));
+        categories = Array.from(categorySet).map(name => ({ name }));
     }
 
     return { nodes: keptNodes, links: keptLinks, categories };
 }
+
 
 function displayRetrievalDetails(result) {
     console.log('displayRetrievalDetails called with:', result);
@@ -1811,11 +1860,11 @@ function displayRetrievalDetails(result) {
         } else if (kg && Array.isArray(kg.nodes) && chartContainer) {
             chartContainer.innerHTML = `<div style="color: #ffb347; text-align: center; padding: 50px;">${
                 currentLang === 'zh'
-                    ? '无可展示结构化节点（已隐藏 entity 类型）'
-                    : 'No structured nodes to display (entity hidden)'
+                    ? '\u672a\u53d1\u73b0\u53ef\u5c55\u793a\u7684\u4e3b\u8981\u63a8\u7406\u94fe'
+                    : 'No primary reasoning chain available'
             }</div>`;
         } else {
-            renderTriplesChart(result.retrieved_triples || [], { hideEntity: true });
+            renderTriplesChart(result.retrieved_triples || [], { hideEntity: false });
         }
     }, 200);
 }
@@ -2073,6 +2122,7 @@ function cleanEntityName(entityStr) {
 }
 
 function getCategoryColor(category) {
+    const key = String(category || '').trim().toLowerCase();
     const colors = {
         'person': '#74b9ff',
         'organization': '#8ed1ff',
@@ -2081,9 +2131,14 @@ function getCategoryColor(category) {
         'object': '#c4b5fd',
         'concept': '#60a5fa',
         'attribute': '#f472b6',
-        'entity': '#93c5fd'
+        'entity': '#93c5fd',
+        'community': '#fb7185',
+        'keyword': '#f59e0b',
+        '主题社区': '#fb7185',
+        '关键词': '#f59e0b',
+        '属性': '#f472b6'
     };
-    return colors[category] || '#93c5fd';
+    return colors[key] || colors[String(category || '').trim()] || '#93c5fd';
 }
 
 function renderQueryChart(data) {

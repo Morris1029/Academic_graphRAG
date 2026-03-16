@@ -1,15 +1,16 @@
 construction:
   chunk_size: 1000
   cross_doc_enabled: true
+  bridge_min_confidence: 0.75
+  bridge_enable_fallback: false
+  bridge_max_edges_per_paper: 2
   batch_size_docs: 24
   token_budget_per_batch: 12000
   bridge_relations:
-  - 扩展
-  - 对比
-  - 复用
-  - 同任务不同方法
-  - 提出
-  - 发表于
+  #拓展、对比、复用
+  - "\u6269\u5c55"
+  - "\u5bf9\u6bd4"
+  - "\u590d\u7528"
   prompt_version: v1
   datasets_no_chunk:
   - demo

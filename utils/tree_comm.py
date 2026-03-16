@@ -421,8 +421,8 @@ class FastTreeComm:
             for comm_id, members in batch:
                 try:
                     llm_info = llm_dict.get(str(comm_id), {})
-                    comm_name = llm_info.get("name", f"Community_{comm_id}")
                     comm_summary = llm_info.get("summary", f"Community of {len(members)} members")
+                    comm_name = self._build_community_display_name(members)
                     
                     super_node_id = f"comm_{level}_{comm_id}"
                     member_names = [self.node_names[n] for n in members]
@@ -434,7 +434,8 @@ class FastTreeComm:
                         properties={
                             "name": comm_name,
                             "description": comm_summary,
-                            "members": member_names
+                            "members": member_names,
+                            "schema_type": "\u4e3b\u9898\u793e\u533a",
                         }
                     )
                     
@@ -473,6 +474,25 @@ class FastTreeComm:
         top_nodes = sorted(community_nodes, key=lambda x: combined_scores[x], reverse=True)[:top_k]
         return top_nodes
 
+    def _build_community_display_name(self, members: List[str]) -> str:
+        """Build a stable display name for a community super node."""
+        try:
+            keyword_node_ids = self.extract_keywords_from_community(members, top_k=3)
+        except Exception:
+            keyword_node_ids = []
+
+        keyword_names = []
+        for node_id in keyword_node_ids:
+            node_name = str(self.node_names.get(node_id, "")).strip()
+            if node_name and node_name not in keyword_names:
+                keyword_names.append(node_name)
+
+        if keyword_names:
+            return f"\u4e3b\u9898\u793e\u533a: {' / '.join(keyword_names[:3])}"
+
+        center_name = str(self.node_names.get(members[0], "")).strip() if members else ""
+        return f"\u4e3b\u9898\u793e\u533a: {center_name or 'Community'}"
+
     def create_super_nodes_with_keywords(self, comm_to_nodes: Dict[str, List[str]], level: int = 4, batch_size: int = 5):
         super_nodes = self.create_super_nodes(comm_to_nodes, level, batch_size)
         
@@ -493,7 +513,10 @@ class FastTreeComm:
                         keyword_node_id,
                         label="keyword",
                         level=3,
-                        properties={"name": keyword_name}
+                        properties={
+                            "name": keyword_name,
+                            "schema_type": "\u5173\u952e\u8bcd",
+                        }
                     )
                     
                     self.graph.add_edge(keyword, keyword_node_id, relation="represented_by")

@@ -825,6 +825,16 @@ class KTBuilder:
         }
         entity_type = "论文" if self._normalize_entity_name(entity_name) in paper_titles else None
         return self._find_or_create_entity_direct(entity_name, default_chunk_id or "unknown", entity_type)
+    def _resolve_existing_bridge_paper_node(
+        self,
+        entity_name: str,
+        paper_by_title: Dict[str, str],
+    ) -> Optional[str]:
+        entity_key = self._normalize_entity_name(entity_name)
+        if not entity_key:
+            return None
+        return paper_by_title.get(entity_key)
+
 
     def _get_cross_doc_prompt(self, batch_facts: List[Dict[str, Any]]) -> str:
         bridge_relations = getattr(self.config.construction, "bridge_relations", [])
@@ -870,8 +880,8 @@ class KTBuilder:
     def _fallback_cross_doc_triples(self, batch_facts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         fallback: List[Dict[str, Any]] = []
         relations = getattr(self.config.construction, "bridge_relations", []) or []
-        dense_relation = relations[3] if len(relations) > 3 else (relations[0] if relations else "同任务不同方法")
-        sparse_relation = relations[1] if len(relations) > 1 else (relations[0] if relations else "对比")
+        dense_relation = relations[0] if relations else "\u6269\u5c55"
+        sparse_relation = relations[1] if len(relations) > 1 else (relations[0] if relations else "\u5bf9\u6bd4")
 
         for i in range(len(batch_facts)):
             for j in range(i + 1, len(batch_facts)):
@@ -918,10 +928,21 @@ class KTBuilder:
         triples = parsed.get("cross_doc_triples", [])
         return triples if isinstance(triples, list) else []
 
-    def _apply_cross_doc_triples(self, triples: List[Dict[str, Any]], fallback: bool = False) -> int:
+    def _apply_cross_doc_triples(
+        self,
+        triples: List[Dict[str, Any]],
+        fallback: bool = False,
+        paper_bridge_counts: Optional[Dict[str, int]] = None,
+        seen_paper_pairs: Optional[Set[Tuple[str, str]]] = None,
+    ) -> int:
         if not triples:
             return 0
         allowed_relations: Set[str] = set(getattr(self.config.construction, "bridge_relations", []))
+        min_confidence = float(getattr(self.config.construction, "bridge_min_confidence", 0.75))
+        max_edges_per_paper = max(1, int(getattr(self.config.construction, "bridge_max_edges_per_paper", 2)))
+        paper_bridge_counts = paper_bridge_counts if paper_bridge_counts is not None else defaultdict(int)
+        seen_paper_pairs = seen_paper_pairs if seen_paper_pairs is not None else set()
+        _, paper_by_title = self._build_paper_node_indexes()
         added = 0
 
         for item in triples:
@@ -946,15 +967,24 @@ class KTBuilder:
             if allowed_relations and relation not in allowed_relations:
                 continue
 
-            source_paper_ids = [str(x) for x in item.get("source_paper_ids", []) if str(x)]
-            evidence_chunk_ids = [str(x) for x in item.get("evidence_chunk_ids", []) if str(x)]
-            default_chunk_id = source_paper_ids[0] if source_paper_ids else (
-                evidence_chunk_ids[0] if evidence_chunk_ids else ""
-            )
+            confidence = float(item.get("confidence", 0.55 if fallback else 0.65))
+            if confidence < min_confidence:
+                continue
 
-            head_id = self._resolve_bridge_entity_node(head, default_chunk_id=default_chunk_id)
-            tail_id = self._resolve_bridge_entity_node(tail, default_chunk_id=default_chunk_id)
+            source_paper_ids = sorted({str(x) for x in item.get("source_paper_ids", []) if str(x)})
+            if len(source_paper_ids) < 2:
+                continue
+            evidence_chunk_ids = [str(x) for x in item.get("evidence_chunk_ids", []) if str(x)]
+
+            head_id = self._resolve_existing_bridge_paper_node(head, paper_by_title)
+            tail_id = self._resolve_existing_bridge_paper_node(tail, paper_by_title)
             if not head_id or not tail_id or head_id == tail_id:
+                continue
+
+            pair_key = tuple(sorted((head_id, tail_id)))
+            if pair_key in seen_paper_pairs:
+                continue
+            if paper_bridge_counts[head_id] >= max_edges_per_paper or paper_bridge_counts[tail_id] >= max_edges_per_paper:
                 continue
 
             self._add_edge_with_metadata(
@@ -962,11 +992,14 @@ class KTBuilder:
                 tail_id,
                 relation,
                 relation_origin="cross_doc",
-                confidence=float(item.get("confidence", 0.55 if fallback else 0.65)),
+                confidence=confidence,
                 evidence_chunk_ids=evidence_chunk_ids,
                 source_paper_ids=source_paper_ids,
                 reason=str(item.get("reason", "")),
             )
+            seen_paper_pairs.add(pair_key)
+            paper_bridge_counts[head_id] += 1
+            paper_bridge_counts[tail_id] += 1
             added += 1
         return added
 
@@ -979,6 +1012,9 @@ class KTBuilder:
             return
 
         total_added = 0
+        paper_bridge_counts: Dict[str, int] = defaultdict(int)
+        seen_paper_pairs: Set[Tuple[str, str]] = set()
+        bridge_enable_fallback = bool(getattr(self.config.construction, "bridge_enable_fallback", False))
         for cluster_units in self._cluster_fact_units(fact_units):
             for batch_facts in self._split_batches_by_budget(cluster_units):
                 if len(batch_facts) < 2:
@@ -986,10 +1022,20 @@ class KTBuilder:
                 self.cross_doc_stats["bridge_batches_total"] += 1
                 try:
                     triples = self._request_cross_doc_triples(batch_facts)
-                    added = self._apply_cross_doc_triples(triples, fallback=False)
-                    if added == 0:
+                    added = self._apply_cross_doc_triples(
+                        triples,
+                        fallback=False,
+                        paper_bridge_counts=paper_bridge_counts,
+                        seen_paper_pairs=seen_paper_pairs,
+                    )
+                    if added == 0 and bridge_enable_fallback:
                         fallback_triples = self._fallback_cross_doc_triples(batch_facts)
-                        fallback_added = self._apply_cross_doc_triples(fallback_triples, fallback=True)
+                        fallback_added = self._apply_cross_doc_triples(
+                            fallback_triples,
+                            fallback=True,
+                            paper_bridge_counts=paper_bridge_counts,
+                            seen_paper_pairs=seen_paper_pairs,
+                        )
                         total_added += fallback_added
                         self.cross_doc_stats["bridge_edges_fallback"] += fallback_added
                     else:

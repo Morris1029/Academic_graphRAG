@@ -44,10 +44,10 @@ try:
     from config import get_config, ConfigManager
 
     GRAPHRAG_AVAILABLE = True
-    logger.info("✅ GraphRAG components loaded successfully")
+    logger.info("GraphRAG components loaded successfully")
 except ImportError as e:
     GRAPHRAG_AVAILABLE = False
-    logger.error(f"⚠️  GraphRAG components not available: {e}")
+    logger.error(f"GraphRAG components not available: {e}")
 
 app = FastAPI(title="Youtu-GraphRAG Unified Interface", version="1.0.0")
 
@@ -55,6 +55,11 @@ app = FastAPI(title="Youtu-GraphRAG Unified Interface", version="1.0.0")
 app.mount("/assets", StaticFiles(directory="assets"), name="assets")
 # Mount frontend directory for frontend assets
 app.mount("/frontend", StaticFiles(directory="frontend"), name="frontend")
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    return FileResponse("assets/SYSU.png")
 
 # CORS middleware
 app.add_middleware(
@@ -1045,7 +1050,7 @@ Your reasoning:
 
         visualization_data = {
             "subqueries": prepare_subquery_visualization(sub_questions, reasoning_steps),
-            "knowledge_graph": prepare_retrieved_graph_visualization(final_triples),
+            "knowledge_graph": prepare_retrieved_graph_visualization(list(all_triples.keys())),
             "reasoning_flow": prepare_reasoning_flow_visualization(reasoning_steps),
             "retrieval_details": {
                 "total_triples": len(final_triples),
@@ -1098,8 +1103,22 @@ def prepare_subquery_visualization(sub_questions: List[Dict], reasoning_steps: L
 
 
 def prepare_retrieved_graph_visualization(triples: List[str]) -> Dict:
-    """Prepare retrieved knowledge visualization in graph module format."""
+    """Prepare retrieved knowledge visualization with main-chain prioritization."""
     fallback_entity_nodes = set()
+    label_category_map = {
+        "community": "\u4e3b\u9898\u793e\u533a",
+        "keyword": "\u5173\u952e\u8bcd",
+        "attribute": "\u5c5e\u6027",
+    }
+
+    def _normalize_category(raw_category: str) -> str:
+        category = str(raw_category or "").strip()
+        lowered = category.lower()
+        if category:
+            if lowered in label_category_map:
+                return label_category_map[lowered]
+            return category
+        return ""
 
     def _split_triple_content(content: str) -> List[str]:
         parts = []
@@ -1127,52 +1146,66 @@ def prepare_retrieved_graph_visualization(triples: List[str]) -> Dict:
             parts.append("".join(current).strip())
         return parts
 
-    def _parse_entity(raw: str) -> tuple[str, str]:
-        text = str(raw or "").strip()
-        meta_blocks = re.findall(r"\[([^\]]+)\]", text)
+    def _parse_entity(raw: str) -> tuple[str, str, str]:
+        text_raw = str(raw or "").strip()
+        meta_blocks = re.findall(r"\[([^\]]+)\]", text_raw)
         schema_type = ""
+        label = ""
+        description = ""
         for block in meta_blocks:
-            m = re.search(r"schema_type:\s*([^,\]]+)", block)
-            if m:
-                schema_type = m.group(1).strip()
-                break
+            match = re.search(r"schema_type:\s*([^,\]]+)", block)
+            if match:
+                schema_type = match.group(1).strip()
+            match = re.search(r"label:\s*([^,\]]+)", block)
+            if match and not label:
+                label = match.group(1).strip()
+            match = re.search(r"description:\s*(.*?)(?:,\s+[A-Za-z_][A-Za-z0-9_ ]*:|$)", block)
+            if match and not description:
+                description = match.group(1).strip()
 
-        clean_name = re.sub(r"\s*\[[^\]]*\]\s*", " ", text).strip()
+        clean_name = re.sub(r"\s*\[[^\]]*\]\s*", " ", text_raw).strip()
         clean_name = re.sub(r"\s+", " ", clean_name)
+        if not schema_type:
+            schema_type = _normalize_category(label)
         if not schema_type:
             schema_type = "entity"
             if clean_name:
                 fallback_entity_nodes.add(clean_name)
-        return clean_name, schema_type
+        return clean_name, _normalize_category(schema_type), description
 
     def _normalize_node_size(category: str) -> int:
         cat = str(category or "").strip().lower()
-        if cat in {"论文", "paper"}:
+        if cat in {"\u8bba\u6587", "paper"}:
             return 30
-        if cat in {"作者", "person"}:
+        if cat in {"\u4f5c\u8005", "person"}:
             return 26
-        if cat in {"机构", "organization"}:
+        if cat in {"\u673a\u6784", "organization"}:
             return 24
+        if cat in {"\u7814\u7a76\u65b9\u6cd5", "method", "\u6280\u672f"}:
+            return 24
+        if cat in {"\u4e3b\u9898\u793e\u533a", "community"}:
+            return 28
+        if cat in {"\u5173\u952e\u8bcd", "keyword", "\u5c5e\u6027", "attribute"}:
+            return 22
         return 22
 
     color_pool = [
         "#60a5fa", "#34d399", "#f59e0b", "#a78bfa", "#f472b6",
         "#22d3ee", "#f87171", "#84cc16", "#38bdf8", "#e879f9",
     ]
+    anchor_categories = {
+        "\u8bba\u6587", "paper", "\u4f5c\u8005", "person", "\u7814\u7a76\u65b9\u6cd5", "method", "\u673a\u6784", "organization",
+        "\u6559\u80b2\u9886\u57df", "\u7814\u7a76\u4e3b\u9898", "\u6559\u5b66\u573a\u666f", "\u671f\u520a", "\u6280\u672f",
+        "\u4e3b\u9898\u793e\u533a", "\u5173\u952e\u8bcd", "\u5c5e\u6027",
+    }
 
     node_map: Dict[str, Dict] = {}
     links = []
     link_seen = set()
-    category_order = []
-
-    def _ensure_category(category_name: str):
-        if category_name not in category_order:
-            category_order.append(category_name)
 
     for triple in triples or []:
         source = relation = target = None
         try:
-            # Format 1: legacy list-like string ['h','r','t']
             if isinstance(triple, str) and triple.startswith("[") and triple.endswith("]"):
                 try:
                     parts = ast.literal_eval(triple)
@@ -1181,7 +1214,6 @@ def prepare_retrieved_graph_visualization(triples: List[str]) -> Dict:
                 if isinstance(parts, (list, tuple)) and len(parts) == 3:
                     source, relation, target = str(parts[0]), str(parts[1]), str(parts[2])
 
-            # Format 2: current "(h [props], r, t [props]) [score: x]"
             if source is None and isinstance(triple, str):
                 normalized = re.sub(r"\s*\[score:\s*[-+]?\d*\.?\d+\]\s*$", "", triple.strip())
                 if normalized.startswith("(") and normalized.endswith(")"):
@@ -1193,54 +1225,137 @@ def prepare_retrieved_graph_visualization(triples: List[str]) -> Dict:
             if not (source and relation and target):
                 continue
 
-            src_name, src_category = _parse_entity(source)
-            tgt_name, tgt_category = _parse_entity(target)
+            src_name, src_category, src_description = _parse_entity(source)
+            tgt_name, tgt_category, tgt_description = _parse_entity(target)
             rel_name = str(relation).strip()
             if not src_name or not tgt_name or not rel_name:
                 continue
 
-            for node_name, node_category in [(src_name, src_category), (tgt_name, tgt_category)]:
-                if node_name not in node_map:
+            for node_name, node_category, node_description in (
+                (src_name, src_category, src_description),
+                (tgt_name, tgt_category, tgt_description),
+            ):
+                existing = node_map.get(node_name)
+                if existing is None:
                     node_map[node_name] = {
                         "id": node_name,
                         "name": node_name[:20],
                         "category": node_category,
                         "symbolSize": _normalize_node_size(node_category),
+                        "description": node_description,
+                        "degree": 0,
+                        "component_id": -1,
+                        "is_fallback_entity": node_name in fallback_entity_nodes,
                     }
-                elif node_map[node_name].get("category") == "entity" and node_category != "entity":
-                    node_map[node_name]["category"] = node_category
-                    node_map[node_name]["symbolSize"] = _normalize_node_size(node_category)
-                _ensure_category(node_map[node_name]["category"])
+                    existing = node_map[node_name]
+                elif existing.get("category") == "entity" and node_category != "entity":
+                    existing["category"] = node_category
+                    existing["symbolSize"] = _normalize_node_size(node_category)
+                if node_description and not existing.get("description"):
+                    existing["description"] = node_description
 
             link_key = (src_name, rel_name, tgt_name)
             if link_key in link_seen:
                 continue
             link_seen.add(link_key)
-            links.append({
-                "source": src_name,
-                "target": tgt_name,
-                "name": rel_name,
-            })
+            links.append({"source": src_name, "target": tgt_name, "name": rel_name})
         except Exception:
             continue
 
-    categories = []
-    for idx, category in enumerate(category_order):
-        categories.append({
-            "name": category,
-            "itemStyle": {"color": color_pool[idx % len(color_pool)]},
-        })
+    if not node_map or not links:
+        return {"nodes": [], "links": [], "categories": []}
+
+    adjacency: Dict[str, set] = {node_id: set() for node_id in node_map}
+    for link in links:
+        source = str(link["source"])
+        target = str(link["target"])
+        adjacency.setdefault(source, set()).add(target)
+        adjacency.setdefault(target, set()).add(source)
+
+    for node_id, neighbors in adjacency.items():
+        if node_id in node_map:
+            node_map[node_id]["degree"] = len(neighbors)
+
+    components = []
+    visited = set()
+    for node_id in node_map:
+        if node_id in visited:
+            continue
+        stack = [node_id]
+        component_nodes = []
+        visited.add(node_id)
+        while stack:
+            current = stack.pop()
+            component_nodes.append(current)
+            for neighbor in adjacency.get(current, set()):
+                if neighbor not in visited:
+                    visited.add(neighbor)
+                    stack.append(neighbor)
+        components.append(component_nodes)
+
+    component_links_map: Dict[int, List[Dict]] = {}
+    for comp_idx, comp_nodes in enumerate(components):
+        node_set = set(comp_nodes)
+        component_links_map[comp_idx] = [
+            link for link in links
+            if str(link["source"]) in node_set and str(link["target"]) in node_set
+        ]
+
+    best_component_id = None
+    best_score = None
+    for comp_idx, comp_nodes in enumerate(components):
+        comp_links = component_links_map.get(comp_idx, [])
+        if not comp_links:
+            continue
+        comp_node_objs = [node_map[node_id] for node_id in comp_nodes if node_id in node_map]
+        non_entity_count = sum(1 for node in comp_node_objs if str(node.get("category", "")).lower() != "entity")
+        anchor_count = sum(
+            1 for node in comp_node_objs
+            if str(node.get("category", "")).strip() in anchor_categories
+            or str(node.get("category", "")).strip().lower() in anchor_categories
+        )
+        fallback_leaf_count = sum(
+            1 for node in comp_node_objs
+            if node.get("is_fallback_entity") and int(node.get("degree", 0)) <= 1
+        )
+        score = len(comp_links) * 100 + non_entity_count * 10 + anchor_count * 5 - fallback_leaf_count * 3
+        if best_score is None or score > best_score:
+            best_score = score
+            best_component_id = comp_idx
+
+    if best_component_id is None:
+        return {"nodes": [], "links": [], "categories": []}
+
+    category_order = []
+    kept_nodes = []
+    for node_id in components[best_component_id]:
+        node = node_map[node_id]
+        node["component_id"] = best_component_id
+        kept_nodes.append(node)
+        category_name = node.get("category", "entity")
+        if category_name not in category_order:
+            category_order.append(category_name)
+
+    kept_links = component_links_map.get(best_component_id, [])
+    categories = [
+        {"name": category, "itemStyle": {"color": color_pool[idx % len(color_pool)]}}
+        for idx, category in enumerate(category_order)
+    ]
 
     logger.info(
-        "Retrieved subgraph parse stats: nodes=%d links=%d fallback_entity_nodes=%d",
+        "Retrieved subgraph parse stats: raw_nodes=%d raw_links=%d components=%d kept_component=%s kept_nodes=%d kept_links=%d fallback_entity_nodes=%d",
         len(node_map),
         len(links),
+        len(components),
+        best_component_id,
+        len(kept_nodes),
+        len(kept_links),
         len(fallback_entity_nodes),
     )
 
     return {
-        "nodes": list(node_map.values()),
-        "links": links,
+        "nodes": kept_nodes,
+        "links": kept_links,
         "categories": categories or [{"name": "entity", "itemStyle": {"color": "#60a5fa"}}],
     }
 
@@ -1510,7 +1625,7 @@ async def startup_event():
     os.makedirs("output/logs", exist_ok=True)
     os.makedirs("schemas", exist_ok=True)
 
-    logger.info("🚀 Youtu-GraphRAG Unified Interface initialized")
+    logger.info("Youtu-GraphRAG Unified Interface initialized")
 
 
 if __name__ == "__main__":

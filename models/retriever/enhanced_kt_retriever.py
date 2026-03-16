@@ -1532,6 +1532,29 @@ class KTRetriever:
             logger.error(f"Error getting text for node {node}: {str(e)}")
             return f"[Error Node: {node}]"
 
+    def _get_node_display_name(self, node: str) -> str:
+        """Get a concise display name for rendering triples and QA context."""
+        try:
+            if node not in self.graph.nodes:
+                return f"[Unknown Node: {node}]"
+
+            data = self.graph.nodes[node]
+            if "properties" in data and isinstance(data["properties"], dict):
+                name = data["properties"].get("name", "")
+            else:
+                name = data.get("name", "")
+
+            if isinstance(name, list):
+                name = ", ".join(str(item) for item in name)
+            elif not isinstance(name, str):
+                name = str(name)
+
+            name = (name or "").strip()
+            return name or f"[Node: {node}]"
+        except Exception as e:
+            logger.error(f"Error getting display name for node {node}: {str(e)}")
+            return f"[Error Node: {node}]"
+
     def _get_node_properties(self, node: str) -> str:
         """
         Get formatted properties of a node for display.
@@ -1548,13 +1571,38 @@ class KTRetriever:
         data = self.graph.nodes[node]
         properties = []
 
-        SKIP_FIELDS = {'name', 'description', 'properties', 'label', 'chunk id', 'level'}
+        SKIP_FIELDS = {'name', 'properties', 'label', 'chunk id', 'level'}
+        DERIVED_SCHEMA_TYPES = {
+            "community": "\u4e3b\u9898\u793e\u533a",
+            "keyword": "\u5173\u952e\u8bcd",
+            "attribute": "\u5c5e\u6027",
+        }
+
+        derived_label = str(data.get("label", "")).strip().lower()
+        schema_type = ""
+        description = ""
+        if isinstance(data.get("properties"), dict):
+            schema_type = str(data["properties"].get("schema_type", "")).strip()
+            description = str(data["properties"].get("description", "")).strip()
+        if not schema_type:
+            schema_type = DERIVED_SCHEMA_TYPES.get(derived_label, "")
+
+        if schema_type:
+            properties.append(f"schema_type: {schema_type}")
+        if derived_label in DERIVED_SCHEMA_TYPES:
+            properties.append(f"label: {derived_label}")
+        if description and derived_label == "community":
+            properties.append(f"description: {description}")
 
         for source in [data.get('properties', {}), data]:
             if not isinstance(source, dict):
                 continue
             for key, value in source.items():
                 if key in SKIP_FIELDS:
+                    continue
+                if key == "schema_type":
+                    continue
+                if key == "description" and derived_label == "community":
                     continue
                 value_str = ", ".join(map(str, value)) if isinstance(value, list) else str(value)
                 properties.append(f"{key}: {value_str}")
@@ -1575,8 +1623,8 @@ class KTRetriever:
         
         for h, r, t in triples:
             try:
-                head_text = self._get_node_text(h)
-                tail_text = self._get_node_text(t)
+                head_text = self._get_node_display_name(h)
+                tail_text = self._get_node_display_name(t)
                 head_props = self._get_node_properties(h)
                 tail_props = self._get_node_properties(t)
                 
@@ -1606,8 +1654,8 @@ class KTRetriever:
         
         for i, (h, r, t, score) in enumerate(scored_triples):
             try:
-                head_text = self._get_node_text(h)
-                tail_text = self._get_node_text(t)
+                head_text = self._get_node_display_name(h)
+                tail_text = self._get_node_display_name(t)
                 head_props = self._get_node_properties(h)
                 tail_props = self._get_node_properties(t)
                 
@@ -1813,8 +1861,8 @@ class KTRetriever:
         formatted_triples = []
         
         for h, r, t, score in scored_triples:
-            head_text = self._get_node_text(h)
-            tail_text = self._get_node_text(t)
+            head_text = self._get_node_display_name(h)
+            tail_text = self._get_node_display_name(t)
             
             if not head_text or not tail_text or head_text.startswith('[Error') or tail_text.startswith('[Error'):
                 continue
