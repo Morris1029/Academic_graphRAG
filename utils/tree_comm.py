@@ -2,7 +2,7 @@ import json
 import time
 import warnings
 from collections import defaultdict
-from typing import Dict, List
+from typing import Dict, List, Tuple
 
 import networkx as nx
 import numpy as np
@@ -49,6 +49,14 @@ class FastTreeComm:
             struct_weight = struct_weight if struct_weight != 0.3 else config.tree_comm.struct_weight
         
         self.model = SentenceTransformer(embedding_model)
+        self.triple_text_max_chars = max(
+            64,
+            int(getattr(config.tree_comm, "triple_text_max_chars", 360)) if config else 360,
+        )
+        self.max_triples_per_node = max(
+            1,
+            int(getattr(config.tree_comm, "max_triples_per_node", 8)) if config else 8,
+        )
         self.semantic_cache = {}
         self.struct_weight = struct_weight
         self.node_list = list(graph.nodes())
@@ -105,11 +113,30 @@ class FastTreeComm:
         self.triple_strings_cache[node_id] = result
         return result
 
+    def _prepare_triple_text_for_embedding(self, triples: List[str], fallback_name: str) -> Tuple[str, int, int]:
+        """Build a bounded text for local embedding to avoid silent model truncation."""
+        selected_triples = [str(triple).strip() for triple in (triples or []) if str(triple).strip()]
+        selected_triples = selected_triples[:self.max_triples_per_node]
+        text = " ".join(selected_triples) if selected_triples else str(fallback_name or "")
+        text = " ".join(text.split())
+        original_length = len(text)
+        if original_length > self.triple_text_max_chars:
+            text = text[: self.triple_text_max_chars].rstrip()
+        return text or str(fallback_name or ""), original_length, len(text)
+
     def get_triple_embedding(self, node_id):
         """leverage triple-level embedding to represent one node"""
         if node_id not in self.semantic_cache:
             triples = self.triple_strings_cache.get(node_id, [])
-            text = ", ".join(triples) if triples else self.graph.nodes[node_id]["properties"]["name"]
+            fallback_name = self.graph.nodes[node_id]["properties"]["name"]
+            text, original_length, processed_length = self._prepare_triple_text_for_embedding(triples, fallback_name)
+            if processed_length < original_length:
+                logger.info(
+                    "TreeComm truncated embedding text for node %s: %d -> %d chars",
+                    node_id,
+                    original_length,
+                    processed_length,
+                )
             self.semantic_cache[node_id] = self.model.encode(text)
         return self.semantic_cache[node_id]
     
@@ -119,10 +146,24 @@ class FastTreeComm:
         
         if uncached_ids:
             texts = []
+            truncated_count = 0
             for nid in uncached_ids:
                 triples = self.triple_strings_cache.get(nid, [])
-                text = " ".join(triples) if triples else self.node_names[nid]
+                text, original_length, processed_length = self._prepare_triple_text_for_embedding(
+                    triples,
+                    self.node_names[nid],
+                )
+                if processed_length < original_length:
+                    truncated_count += 1
                 texts.append(text)
+            if truncated_count:
+                logger.info(
+                    "TreeComm truncated %d/%d embedding texts in batch (max_chars=%d, max_triples=%d)",
+                    truncated_count,
+                    len(uncached_ids),
+                    self.triple_text_max_chars,
+                    self.max_triples_per_node,
+                )
             
             with torch.no_grad():
                 embeddings = self.model.encode(texts, convert_to_tensor=True, batch_size=128)

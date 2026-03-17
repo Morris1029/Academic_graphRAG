@@ -57,6 +57,8 @@ class TreeCommConfig:
     struct_weight: float = 0.3
     enable_fast_mode: bool = True
     max_total_communities: int = 100
+    triple_text_max_chars: int = 360
+    max_triples_per_node: int = 8
 
 @dataclass
 class FAISSConfig:
@@ -100,6 +102,8 @@ class EmbeddingsConfig:
     device: str = "cpu"
     batch_size: int = 32
     max_length: int = 512
+    text_max_chars: int = 480
+    chunk_text_max_chars: int = 480
 
 @dataclass
 class NLPConfig:

@@ -1,5 +1,6 @@
 import os
 import pickle
+import re
 import threading
 import time
 from functools import lru_cache
@@ -76,6 +77,14 @@ class KTRetriever:
         self.schema_path = schema_path
         self.recall_paths = recall_paths
         self.mode = mode
+        self.embedding_text_max_chars = max(
+            64,
+            int(getattr(config.embeddings, "text_max_chars", 480)) if config else 480,
+        )
+        self.chunk_text_max_chars = max(
+            64,
+            int(getattr(config.embeddings, "chunk_text_max_chars", self.embedding_text_max_chars)) if config else 480,
+        )
         os.makedirs(cache_dir, exist_ok=True)
         self.debug_mode = True
 
@@ -157,6 +166,49 @@ class KTRetriever:
                     self.qa_encoder.encode(query)
                 ).float().to(self.device)
         return query_embed
+
+    def _truncate_embedding_text(self, text: str, max_chars: int) -> Tuple[str, int, int]:
+        normalized = " ".join(str(text or "").split())
+        original_length = len(normalized)
+        if original_length > max_chars:
+            normalized = normalized[:max_chars].rstrip()
+        return normalized, original_length, len(normalized)
+
+    def _prepare_chunk_text_for_embedding(self, text: str) -> Tuple[str, int, int]:
+        """Build a bounded chunk text that preserves title and early abstract context."""
+        raw_text = str(text or "").strip()
+        title = ""
+        keywords = ""
+        abstract = raw_text
+
+        title_match = re.search(r"Title:\s*(.*?)(?:\\n|\n)\s*Abstract:\s*", raw_text, re.IGNORECASE | re.DOTALL)
+        if title_match:
+            title = title_match.group(1).strip()
+            abstract = raw_text[title_match.end():].strip()
+        else:
+            title_match = re.search(r"Title:\s*(.*)", raw_text, re.IGNORECASE)
+            if title_match:
+                title = title_match.group(1).strip()
+                abstract = raw_text[title_match.end():].strip()
+
+        keywords_match = re.search(r"Keywords?:\s*(.*?)(?:\\n|\n)\s*Abstract:\s*", raw_text, re.IGNORECASE | re.DOTALL)
+        if keywords_match:
+            keywords = keywords_match.group(1).strip()
+
+        parts = []
+        if title:
+            parts.append(f"Title: {title}")
+        if keywords:
+            parts.append(f"Keywords: {keywords}")
+
+        reserved = len(" ".join(parts)) + (1 if parts else 0)
+        abstract_budget = max(80, self.chunk_text_max_chars - reserved)
+        abstract_text, _, _ = self._truncate_embedding_text(abstract, abstract_budget)
+        if abstract_text:
+            parts.append(f"Abstract: {abstract_text}")
+
+        prepared_text = "\n".join(parts) if parts else raw_text
+        return self._truncate_embedding_text(prepared_text, self.chunk_text_max_chars)
 
     def _precompute_node_texts(self):
         """
@@ -2890,10 +2942,25 @@ class KTRetriever:
             valid_chunk_ids = []
             
             for i in range(0, len(chunk_texts), batch_size):
-                batch_texts = chunk_texts[i:i + batch_size]
+                raw_batch_texts = chunk_texts[i:i + batch_size]
                 batch_chunk_ids = chunk_ids[i:i + batch_size]
+                batch_texts = []
+                truncated_count = 0
+                for raw_text in raw_batch_texts:
+                    prepared_text, original_length, processed_length = self._prepare_chunk_text_for_embedding(raw_text)
+                    if processed_length < original_length:
+                        truncated_count += 1
+                    batch_texts.append(prepared_text)
                 
                 try:
+                    if truncated_count:
+                        logger.info(
+                            "Chunk embedding preprocessing truncated %d/%d texts in batch %d (max_chars=%d)",
+                            truncated_count,
+                            len(batch_texts),
+                            i // batch_size,
+                            self.chunk_text_max_chars,
+                        )
                     batch_embeddings = self.qa_encoder.encode(batch_texts, convert_to_tensor=True)
                     
                     for j, chunk_id in enumerate(batch_chunk_ids):
@@ -2907,7 +2974,15 @@ class KTRetriever:
                     for j, chunk_id in enumerate(batch_chunk_ids):
                         try:
                             chunk_text = self.chunk2id[chunk_id]
-                            embedding = torch.tensor(self.qa_encoder.encode(chunk_text)).float().to(self.device)
+                            prepared_text, original_length, processed_length = self._prepare_chunk_text_for_embedding(chunk_text)
+                            if processed_length < original_length:
+                                logger.debug(
+                                    "Chunk embedding truncated text for chunk %s: %d -> %d chars",
+                                    chunk_id,
+                                    original_length,
+                                    processed_length,
+                                )
+                            embedding = torch.tensor(self.qa_encoder.encode(prepared_text)).float().to(self.device)
                             self.chunk_embedding_cache[chunk_id] = embedding
                             embeddings_list.append(embedding.cpu().numpy())
                             valid_chunk_ids.append(chunk_id)
@@ -3191,7 +3266,15 @@ class KTRetriever:
             chunk_similarities = []
             for i, (chunk_id, content) in enumerate(zip(chunk_ids, chunk_contents)):
                 try:
-                    chunk_embed = torch.tensor(self.qa_encoder.encode(content)).float().to(self.device)
+                    prepared_text, original_length, processed_length = self._prepare_chunk_text_for_embedding(content)
+                    if processed_length < original_length:
+                        logger.debug(
+                            "Chunk rerank truncated text for chunk %s: %d -> %d chars",
+                            chunk_id,
+                            original_length,
+                            processed_length,
+                        )
+                    chunk_embed = torch.tensor(self.qa_encoder.encode(prepared_text)).float().to(self.device)
                     
                     similarity = F.cosine_similarity(question_embed, chunk_embed, dim=0).item()
                     similarity = max(0.0, similarity)  # Ensure non-negative

@@ -22,6 +22,8 @@ construction:
     enable_fast_mode: true
     struct_weight: 0.3
     max_total_communities: 100
+    triple_text_max_chars: 360
+    max_triples_per_node: 8
 
 active_dataset: demo
 
@@ -37,6 +39,8 @@ embeddings:
   device: cpu
   max_length: 512
   model_name: all-MiniLM-L6-v2
+  text_max_chars: 480
+  chunk_text_max_chars: 480
 
 nlp:
   spacy_model: zh_core_web_lg
@@ -86,7 +90,7 @@ prompts:
       ```{schema}```\n
      2. 提取准则
      - 实体命名：实体名应为具体的专有名词（如 \"Transformer\"），避免使用长句。\n
-     - 关系标准化：必须使用 Schema 中定义的标准谓语。例如：(学者)-[隶属]->(机构)，(论文)-[发表于]->(期刊)。
+     - 关系标准化：必须使用 Schema 中定义的标准谓语。例如：(作者)-[隶属]->(机构)，(论文)-[发表于]->(期刊)。
      - 属性精简：Attributes 仅记录关键特征。严禁全文复制摘要，描述性属性不得超过 50 字。
      - 去噪与去冗：仅提取前三位作者和一级单位名称。禁止提取循环关系（即实体1和实体2不能相同）。忽略\"方法\"、\"研究\"等泛泛之词。
      - 灵活扩展：如果文本中包含非常有价值的知识，但 Schema 中未定义，你可以提取它并在 \"new_schema_types\" 中记录。
