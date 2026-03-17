@@ -85,6 +85,8 @@ class KTRetriever:
             64,
             int(getattr(config.embeddings, "chunk_text_max_chars", self.embedding_text_max_chars)) if config else 480,
         )
+        self.enable_diagnostics = bool(getattr(config.retrieval, "enable_diagnostics", True)) if config else True
+        self.weak_relation_penalty = float(getattr(config.retrieval, "weak_relation_penalty", 0.2)) if config else 0.2
         os.makedirs(cache_dir, exist_ok=True)
         self.debug_mode = True
 
@@ -1113,15 +1115,36 @@ class KTRetriever:
         if not target_types:
             return list(self.graph.nodes())
         
+        alias_map = {
+            "paper": "论文",
+            "author": "作者",
+            "organization": "机构",
+            "institution": "机构",
+            "journal": "期刊",
+            "method": "研究方法",
+            "framework": "研究方法",
+            "topic": "研究主题",
+            "theme": "研究主题",
+            "field": "教育领域",
+            "scenario": "教学场景",
+            "community": "主题社区",
+            "keyword": "关键词",
+            "attribute": "属性",
+        }
+        normalized_targets = {
+            alias_map.get(str(target).strip().lower(), str(target).strip())
+            for target in target_types
+            if str(target).strip()
+        }
         filtered_nodes = []
         for node_id, node_data in self.graph.nodes(data=True):
             node_properties = node_data.get('properties', {})
-            node_schema_type = node_properties.get('schema_type', '')
-            
-            if node_schema_type in target_types:
-                filtered_nodes.append(node_id)
-            # Also include nodes without schema_type for backward compatibility
-            elif not node_schema_type and node_data.get('label') == 'entity':
+            node_schema_type = str(node_properties.get('schema_type', '')).strip()
+            if not node_schema_type:
+                derived_label = str(node_data.get('label', '')).strip().lower()
+                node_schema_type = alias_map.get(derived_label, '')
+
+            if node_schema_type in normalized_targets:
                 filtered_nodes.append(node_id)
 
         return filtered_nodes
@@ -1860,21 +1883,168 @@ class KTRetriever:
     def _collect_all_scored_triples(self, results: Dict, question_embed: torch.Tensor) -> List[Tuple[str, str, str, float]]:
         """Collect and merge all scored triples from both paths."""
         all_scored_triples = []
-        
+
         # Add path2 scored triples if available
         path2_scored = results['path2_results'].get('scored_triples', [])
         if path2_scored:
             all_scored_triples.extend(path2_scored)
-        
+
         # Add path1 reranked triples
         path1_triples = results['path1_results'].get('one_hop_triples', [])
         if path1_triples:
             path1_scored = self._rerank_triples_by_relevance(path1_triples, question_embed)
             all_scored_triples.extend(path1_scored)
-        
-        # Sort by score (descending) and return top k
+
         all_scored_triples.sort(key=lambda x: x[3], reverse=True)
         return all_scored_triples
+
+    def _normalize_exact_match_text(self, text: str) -> str:
+        normalized = str(text or '').lower()
+        normalized = re.sub(r"[^\w\u4e00-\u9fff]+", " ", normalized)
+        normalized = re.sub(r'\s+', ' ', normalized).strip()
+        return normalized
+
+    def _find_exact_paper_matches(self, question: str) -> List[str]:
+        normalized_question = self._normalize_exact_match_text(question)
+        if not normalized_question:
+            return []
+
+        matched_nodes = []
+        for node_id, node_data in self.graph.nodes(data=True):
+            if not self._is_paper_node(node_id):
+                continue
+
+            props = node_data.get('properties', {}) if isinstance(node_data.get('properties'), dict) else {}
+            candidates = [props.get('name', '')]
+            aliases = props.get('aliases', []) or []
+            if isinstance(aliases, list):
+                candidates.extend(aliases)
+
+            for candidate in candidates:
+                candidate_text = self._normalize_exact_match_text(candidate)
+                if len(candidate_text) < 4:
+                    continue
+                if candidate_text and candidate_text in normalized_question:
+                    matched_nodes.append(node_id)
+                    break
+
+        return matched_nodes
+
+    def _has_fact_intent(self, question: str) -> bool:
+        q = (question or '').lower()
+        fact_intent_keywords = [
+            '\u8c01', '\u4f5c\u8005', '\u64b0\u5199', '\u63d0\u51fa', '\u6846\u67b6',
+            '\u65b9\u6cd5', '\u671f\u520a', '\u53d1\u8868\u4e8e', '\u662f\u4ec0\u4e48',
+            'who', 'author', 'framework', 'method',
+        ]
+        return any(keyword in q for keyword in fact_intent_keywords)
+
+    def _is_weak_relation(self, relation: str) -> bool:
+        return str(relation or '').strip() in {
+            'member_of',
+            'keyword_of',
+            'describes',
+            'represented_by',
+            'kw_filter_by',
+        }
+
+    def _apply_weak_relation_penalty(
+        self,
+        scored_triples: List[Tuple[str, str, str, float]],
+        question: str,
+    ) -> List[Tuple[str, str, str, float]]:
+        if not scored_triples:
+            return scored_triples
+
+        penalty = float(self.weak_relation_penalty)
+        is_fact_question = self._has_fact_intent(question)
+        adjusted = []
+        for h, r, t, score in scored_triples:
+            relation = str(r or '').strip()
+            delta = 0.0
+            if self._is_weak_relation(relation):
+                delta -= penalty * (1.5 if is_fact_question else 1.0)
+            adjusted.append((h, r, t, float(score) + delta))
+
+        adjusted.sort(key=lambda x: x[3], reverse=True)
+        return adjusted
+
+    def _build_retrieval_diagnostics(
+        self,
+        question: str,
+        exact_paper_nodes: List[str],
+        exact_paper_chunk_ids: set,
+        chunk_retrieval_ids: List[str],
+        ordered_chunk_ids: List[str],
+        limited_scored_triples: List[Tuple[str, str, str, float]],
+    ) -> Dict[str, object]:
+        exact_titles = []
+        for node_id in exact_paper_nodes:
+            if node_id not in self.graph.nodes:
+                continue
+            props = self.graph.nodes[node_id].get('properties', {})
+            exact_titles.append(str(props.get('name', node_id)))
+
+        weak_relation_count = sum(1 for _, r, _, _ in limited_scored_triples if self._is_weak_relation(str(r)))
+        matched_chunk_hits = [cid for cid in chunk_retrieval_ids if cid in exact_paper_chunk_ids]
+        return {
+            'question': question,
+            'fact_intent': self._has_fact_intent(question),
+            'exact_match_paper_titles': list(dict.fromkeys(exact_titles)),
+            'exact_match_paper_nodes': len(set(exact_paper_nodes)),
+            'exact_match_chunk_ids': sorted(str(cid) for cid in exact_paper_chunk_ids),
+            'exact_match_in_graph': bool(exact_paper_nodes),
+            'exact_match_in_chunk_topk': bool(matched_chunk_hits),
+            'exact_match_chunk_hits': [str(cid) for cid in matched_chunk_hits],
+            'ordered_chunk_ids_preview': [str(cid) for cid in ordered_chunk_ids[:10]],
+            'paper_triples_in_topk': any(self._is_paper_node(h) or self._is_paper_node(t) for h, _, t, _ in limited_scored_triples),
+            'weak_relation_triples_in_topk': weak_relation_count,
+        }
+
+    def _boost_exact_paper_match_triples(
+        self,
+        scored_triples: List[Tuple[str, str, str, float]],
+        matched_paper_nodes: List[str],
+    ) -> List[Tuple[str, str, str, float]]:
+        if not scored_triples or not matched_paper_nodes:
+            return scored_triples
+
+        matched = set(matched_paper_nodes)
+        boosted = []
+        for h, r, t, score in scored_triples:
+            boost = 0.0
+            if h in matched or t in matched:
+                boost += 1.0
+                if str(r) in {'撰写', '提出', '发表于', '采用', '聚焦'}:
+                    boost += 0.2
+            boosted.append((h, r, t, float(score) + boost))
+
+        boosted.sort(key=lambda x: x[3], reverse=True)
+        return boosted
+
+    def _prioritize_exact_match_chunk_ids(self, question: str, ordered_chunk_ids: List[str]) -> List[str]:
+        if not ordered_chunk_ids:
+            return ordered_chunk_ids
+
+        normalized_question = self._normalize_exact_match_text(question)
+        matched = []
+        others = []
+        seen = set()
+
+        for chunk_id in ordered_chunk_ids:
+            if chunk_id in seen:
+                continue
+            seen.add(chunk_id)
+            raw_text = str(self.chunk2id.get(chunk_id, ''))
+            title_match = re.search(r"Title:\s*(.*?)(?:\\n|\n)\s*Abstract:", raw_text, re.IGNORECASE | re.DOTALL)
+            title = title_match.group(1).strip() if title_match else ''
+            normalized_title = self._normalize_exact_match_text(title)
+            if normalized_title and normalized_title in normalized_question:
+                matched.append(chunk_id)
+            else:
+                others.append(chunk_id)
+
+        return matched + others
 
     def _apply_fact_relation_boost(
         self,
@@ -1887,17 +2057,16 @@ class KTRetriever:
         if not scored_triples:
             return scored_triples
 
-        q = (question or "").lower()
-        fact_intent_keywords = ["谁", "作者", "提出", "框架", "方法", "是什么", "who", "author", "framework", "method"]
-        if not any(keyword in q for keyword in fact_intent_keywords):
+        if not self._has_fact_intent(question):
             return scored_triples
 
         relation_boost = {
-            "撰写": 0.15,
-            "提出": 0.12,
-            "定义": 0.10,
-            "应用于": 0.06,
-            "聚焦": 0.04,
+            '撰写': 0.15,
+            '提出': 0.12,
+            '定义': 0.10,
+            '发表于': 0.08,
+            '应用于': 0.06,
+            '聚焦': 0.04,
         }
 
         boosted = []
@@ -1907,7 +2076,7 @@ class KTRetriever:
 
         boosted.sort(key=lambda x: x[3], reverse=True)
         return boosted
-    
+
     def _format_scored_triples(self, scored_triples: List[Tuple[str, str, str, float]]) -> List[str]:
         """Format scored triples into readable text with node properties."""
         formatted_triples = []
@@ -1922,7 +2091,7 @@ class KTRetriever:
             head_props = self._get_node_properties(h)
             tail_props = self._get_node_properties(t)
             triple_text = f"({head_text} {head_props}, {r}, {tail_text} {tail_props}) [score: {score:.3f}]"
-            if "represented_by" == r or "kw_filter_by" == r:
+            if self._is_weak_relation(str(r)):
                 continue
             formatted_triples.append(triple_text)
             
@@ -1966,7 +2135,7 @@ class KTRetriever:
             collected = 0
             for _, target, edge_data in self.graph.out_edges(paper_node, data=True):
                 relation = edge_data.get("relation", "")
-                if relation in {"represented_by", "kw_filter_by"}:
+                if self._is_weak_relation(str(relation)):
                     continue
                 anchor_triples.append((paper_node, relation, target))
                 collected += 1
@@ -1976,7 +2145,7 @@ class KTRetriever:
             if collected < max_per_paper:
                 for source, _, edge_data in self.graph.in_edges(paper_node, data=True):
                     relation = edge_data.get("relation", "")
-                    if relation in {"represented_by", "kw_filter_by"}:
+                    if self._is_weak_relation(str(relation)):
                         continue
                     anchor_triples.append((source, relation, paper_node))
                     collected += 1
@@ -2087,9 +2256,18 @@ class KTRetriever:
             chunk_results, question_embed, top_k
         )
         chunk_retrieval_id_set = set(chunk_retrieval_ids)
-        
+        exact_paper_nodes = self._find_exact_paper_matches(question)
+        exact_paper_chunk_ids = {
+            str(self._get_node_chunk_id(self.graph.nodes[node_id]))
+            for node_id in exact_paper_nodes
+            if node_id in self.graph.nodes and self._get_node_chunk_id(self.graph.nodes[node_id])
+        }
+        chunk_retrieval_id_set.update(exact_paper_chunk_ids)
+
         all_scored_triples = self._collect_all_scored_triples(results, question_embed)
+        all_scored_triples = self._apply_weak_relation_penalty(all_scored_triples, question)
         all_scored_triples = self._apply_fact_relation_boost(all_scored_triples, question)
+        all_scored_triples = self._boost_exact_paper_match_triples(all_scored_triples, exact_paper_nodes)
         all_scored_triples, injection_info = self._inject_paper_anchor_triples(
             all_scored_triples,
             chunk_retrieval_id_set,
@@ -2107,11 +2285,22 @@ class KTRetriever:
         triple_chunk_ids = self._extract_chunk_ids_from_triples(limited_scored_triples)
         
         ordered_chunk_ids = list(dict.fromkeys(
-            [str(cid) for cid in chunk_retrieval_ids] + [str(cid) for cid in triple_chunk_ids]
+            [str(cid) for cid in exact_paper_chunk_ids] +
+            [str(cid) for cid in chunk_retrieval_ids] +
+            [str(cid) for cid in triple_chunk_ids]
         ))
+        ordered_chunk_ids = self._prioritize_exact_match_chunk_ids(question, ordered_chunk_ids)
         matching_chunks = self._get_matching_chunks(set(ordered_chunk_ids))
         chunk_map = {cid: self.chunk2id[cid] for cid in ordered_chunk_ids if cid in self.chunk2id}
         ordered_chunks = [chunk_map[cid] for cid in ordered_chunk_ids if cid in chunk_map]
+        diagnostics = self._build_retrieval_diagnostics(
+            question,
+            exact_paper_nodes,
+            exact_paper_chunk_ids,
+            [str(cid) for cid in chunk_retrieval_ids],
+            ordered_chunk_ids,
+            limited_scored_triples,
+        ) if self.enable_diagnostics else {}
         
         retrieval_results = {
             'triples': formatted_triples,
@@ -2120,7 +2309,8 @@ class KTRetriever:
             'chunk_retrieval_results': chunk_retrieval_results,
             'paper_anchor_injected': injection_info['paper_anchor_injected'],
             'paper_anchor_injected_count': injection_info['injected_count'],
-            'paper_anchor_reason': injection_info['reason']
+            'paper_anchor_reason': injection_info['reason'],
+            'diagnostics': diagnostics,
         }
         
         return retrieval_results, retrieval_time

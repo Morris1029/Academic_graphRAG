@@ -26,6 +26,7 @@ from pydantic import BaseModel
 import uvicorn
 
 from utils.logger import logger
+from utils.dataset_audit import audit_dataset
 import ast
 
 # Import document parser
@@ -104,6 +105,49 @@ LLM_SCOPE_ENV = {
     "rag": ("RAG_LLM_MODEL", "RAG_LLM_BASE_URL", "RAG_LLM_API_KEY"),
     "default": ("LLM_MODEL", "LLM_BASE_URL", "LLM_API_KEY"),
 }
+
+PAPER_VISUAL_CATEGORY = "\u8bba\u6587"
+
+VISUAL_CATEGORY_ALIASES = {
+    "community": "主题社区",
+    "keyword": "关键词",
+    "attribute": "属性",
+    "paper": PAPER_VISUAL_CATEGORY,
+    "author": "作者",
+    "organization": "机构",
+    "institution": "机构",
+    "journal": "期刊",
+    "method": "研究方法",
+    "framework": "研究方法",
+    "topic": "研究主题",
+    "theme": "研究主题",
+    "field": "教育领域",
+    "scenario": "教学场景",
+    "teaching mode": "研究方法",
+    "教学模式": "研究方法",
+    "人才培养模式": "研究方法",
+    "研究理论": "研究主题",
+    "教育理念": "研究主题",
+}
+
+
+def normalize_visual_category(raw_category: str) -> str:
+    category = str(raw_category or "").strip()
+    if not category:
+        return "entity"
+    lowered = category.lower()
+    return VISUAL_CATEGORY_ALIASES.get(lowered, VISUAL_CATEGORY_ALIASES.get(category, category))
+
+
+def build_visual_node_id(node_data: Dict) -> str:
+    props = node_data.get("properties", {}) if isinstance(node_data, dict) else {}
+    name = str(props.get("name", "")).strip()
+    schema_type = normalize_visual_category(props.get("schema_type", node_data.get("label", "entity")))
+    if schema_type == PAPER_VISUAL_CATEGORY:
+        doc_uid = str(props.get("doc_uid", props.get("chunk_id", props.get("chunk id", "")))).strip()
+        if doc_uid:
+            return f"paper::{doc_uid}"
+    return name
 
 
 def ensure_llm_scope_config(scope: str):
@@ -283,6 +327,16 @@ async def clear_cache_files(dataset_name: str):
     except Exception as e:
         logger.error(f"Error clearing cache files for {dataset_name}: {e}")
         # Don't raise exception, just log the error
+
+
+@app.get("/api/dataset-audit/{dataset_name}")
+async def get_dataset_audit(dataset_name: str):
+    """Return a stable audit snapshot for source/chunk/graph consistency checks."""
+    try:
+        return audit_dataset(dataset_name)
+    except Exception as e:
+        logger.error(f"Dataset audit failed for {dataset_name}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # Serve frontend HTML
@@ -615,6 +669,7 @@ def convert_graphrag_format(graph_data: List) -> Dict:
     """Convert GraphRAG relationship list to ECharts format"""
     nodes_dict = {}
     links = []
+    node_degree = {}
 
     # Extract nodes and relationships from the list
     for item in graph_data:
@@ -629,24 +684,34 @@ def convert_graphrag_format(graph_data: List) -> Dict:
         start_id = ""
         end_id = ""
         if start_node:
-            start_id = start_node.get("properties", {}).get("name", "")
+            start_name = start_node.get("properties", {}).get("name", "")
+            start_id = build_visual_node_id(start_node)
             if start_id and start_id not in nodes_dict:
+                category = normalize_visual_category(
+                    start_node.get("properties", {}).get("schema_type", start_node.get("label", "entity"))
+                )
                 nodes_dict[start_id] = {
                     "id": start_id,
-                    "name": start_id[:30],
-                    "category": start_node.get("properties", {}).get("schema_type", start_node.get("label", "entity")),
+                    "name": str(start_name)[:40],
+                    "fullName": start_name,
+                    "category": category,
                     "symbolSize": 25,
                     "properties": start_node.get("properties", {})
                 }
 
         # Process end node
         if end_node:
-            end_id = end_node.get("properties", {}).get("name", "")
+            end_name = end_node.get("properties", {}).get("name", "")
+            end_id = build_visual_node_id(end_node)
             if end_id and end_id not in nodes_dict:
+                category = normalize_visual_category(
+                    end_node.get("properties", {}).get("schema_type", end_node.get("label", "entity"))
+                )
                 nodes_dict[end_id] = {
                     "id": end_id,
-                    "name": end_id[:30],
-                    "category": end_node.get("properties", {}).get("schema_type", end_node.get("label", "entity")),
+                    "name": str(end_name)[:40],
+                    "fullName": end_name,
+                    "category": category,
                     "symbolSize": 25,
                     "properties": end_node.get("properties", {})
                 }
@@ -659,10 +724,50 @@ def convert_graphrag_format(graph_data: List) -> Dict:
                 "name": relation,
                 "value": 1
             })
+            node_degree[start_id] = node_degree.get(start_id, 0) + 1
+            node_degree[end_id] = node_degree.get(end_id, 0) + 1
+
+    all_nodes = list(nodes_dict.values())
+    paper_nodes = [node for node in all_nodes if node.get("category") == PAPER_VISUAL_CATEGORY]
+    other_nodes = [node for node in all_nodes if node.get("category") != PAPER_VISUAL_CATEGORY]
+
+    for node in all_nodes:
+        degree = node_degree.get(node["id"], 0)
+        node["value"] = degree
+        if node["category"] == PAPER_VISUAL_CATEGORY:
+            node["symbolSize"] = 18 if degree <= 2 else min(24, 18 + degree * 0.6)
+        else:
+            node["symbolSize"] = min(30, 16 + degree * 0.8)
+
+    paper_nodes.sort(key=lambda node: (-node_degree.get(node["id"], 0), node["id"]))
+    other_nodes.sort(key=lambda node: (-node_degree.get(node["id"], 0), node["id"]))
+
+    max_nodes = 3500
+    paper_budget = min(len(paper_nodes), 2500)
+    kept_nodes = paper_nodes[:paper_budget]
+    remaining_budget = max(0, max_nodes - len(kept_nodes))
+    if remaining_budget:
+        kept_nodes.extend(other_nodes[:remaining_budget])
+
+    kept_node_ids = {node["id"] for node in kept_nodes}
+    kept_links = [
+        link for link in links
+        if link["source"] in kept_node_ids and link["target"] in kept_node_ids
+    ]
+    kept_links.sort(
+        key=lambda link: (
+            0
+            if nodes_dict.get(link["source"], {}).get("category") == PAPER_VISUAL_CATEGORY
+            or nodes_dict.get(link["target"], {}).get("category") == PAPER_VISUAL_CATEGORY
+            else 1,
+            -(node_degree.get(link["source"], 0) + node_degree.get(link["target"], 0)),
+        )
+    )
+    kept_links = kept_links[:8000]
 
     # Create categories
     categories_set = set()
-    for node in nodes_dict.values():
+    for node in kept_nodes:
         categories_set.add(node["category"])
 
     categories = []
@@ -674,17 +779,17 @@ def convert_graphrag_format(graph_data: List) -> Dict:
             }
         })
 
-    nodes = list(nodes_dict.values())
-
     return {
-        "nodes": nodes[:500],  # Limit for better visual effects
-        "links": links[:1000],
+        "nodes": kept_nodes,
+        "links": kept_links,
         "categories": categories,
         "stats": {
-            "total_nodes": len(nodes),
+            "total_nodes": len(all_nodes),
             "total_edges": len(links),
-            "displayed_nodes": len(nodes[:500]),
-            "displayed_edges": len(links[:1000])
+            "displayed_nodes": len(kept_nodes),
+            "displayed_edges": len(kept_links),
+            "total_papers": len(paper_nodes),
+            "displayed_papers": sum(1 for node in kept_nodes if node.get("category") == PAPER_VISUAL_CATEGORY),
         }
     }
 
@@ -698,7 +803,7 @@ def convert_standard_format(graph_data: Dict) -> Dict:
     # Extract unique categories
     node_types = set()
     for node in graph_data.get("nodes", []):
-        node_type = node.get("type", "entity")
+        node_type = normalize_visual_category(node.get("type", "entity"))
         node_types.add(node_type)
 
     for i, node_type in enumerate(node_types):
@@ -714,7 +819,7 @@ def convert_standard_format(graph_data: Dict) -> Dict:
         nodes.append({
             "id": node.get("id", ""),
             "name": node.get("name", node.get("id", ""))[:30],
-            "category": node.get("type", "entity"),
+            "category": normalize_visual_category(node.get("type", "entity")),
             "value": len(node.get("attributes", [])),
             "symbolSize": min(max(len(node.get("attributes", [])) * 3 + 15, 15), 40),
             "attributes": node.get("attributes", [])
@@ -868,6 +973,7 @@ async def ask_question(request: QuestionRequest, client_id: str = "default"):
             triples = retrieval_results.get('triples', []) or []
             chunk_ids = retrieval_results.get('chunk_ids', []) or []
             chunk_contents = retrieval_results.get('chunk_contents', []) or []
+            retrieval_diagnostics = retrieval_results.get('diagnostics', {}) or {}
             step_chunk_contents: List[str] = []
             if isinstance(chunk_contents, dict):
                 for cid, ctext in chunk_contents.items():
@@ -890,7 +996,8 @@ async def ask_question(request: QuestionRequest, client_id: str = "default"):
                 "chunks_count": len(chunk_ids),
                 "processing_time": elapsed,
                 "chunk_contents": step_chunk_contents,
-                "chunk_ids": [str(cid) for cid in chunk_ids]
+                "chunk_ids": [str(cid) for cid in chunk_ids],
+                "retrieval_diagnostics": retrieval_diagnostics,
             })
 
             # Stream this sub-question's partial result to frontend via WebSocket
@@ -904,6 +1011,7 @@ async def ask_question(request: QuestionRequest, client_id: str = "default"):
                     "triples_preview": list(dict.fromkeys(triples))[:5],
                     "triples_count": len(triples),
                     "chunks_count": len(chunk_ids),
+                    "retrieval_diagnostics": retrieval_diagnostics,
                     "processing_time": elapsed,
                     "timestamp": datetime.now().isoformat()
                 }, client_id)
@@ -1057,7 +1165,9 @@ Your reasoning:
                 "total_chunks": len(final_chunk_contents),
                 "sub_questions_count": len(sub_questions),
                 "triples_by_subquery": [s.get("triples_count", 0) for s in reasoning_steps if
-                                        s.get("type") == "sub_question"]
+                                        s.get("type") == "sub_question"],
+                "diagnostics_by_subquery": [s.get("retrieval_diagnostics", {}) for s in reasoning_steps if
+                                             s.get("type") == "sub_question"],
             }
         }
 
@@ -1105,20 +1215,10 @@ def prepare_subquery_visualization(sub_questions: List[Dict], reasoning_steps: L
 def prepare_retrieved_graph_visualization(triples: List[str]) -> Dict:
     """Prepare retrieved knowledge visualization with main-chain prioritization."""
     fallback_entity_nodes = set()
-    label_category_map = {
-        "community": "\u4e3b\u9898\u793e\u533a",
-        "keyword": "\u5173\u952e\u8bcd",
-        "attribute": "\u5c5e\u6027",
-    }
 
     def _normalize_category(raw_category: str) -> str:
         category = str(raw_category or "").strip()
-        lowered = category.lower()
-        if category:
-            if lowered in label_category_map:
-                return label_category_map[lowered]
-            return category
-        return ""
+        return normalize_visual_category(category) if category else ""
 
     def _split_triple_content(content: str) -> List[str]:
         parts = []

@@ -882,8 +882,8 @@ function renderGraph(data) {
             formatter: function (params) {
                 if (params.dataType === 'node') {
                     const d = params.data || {};
-                    let name = (d.name || '').toString().replace(/\s+/g,' ').trim();
-                    if (name.length > 20) name = name.slice(0,20) + '...';
+                    let name = (d.fullName || d.name || '').toString().replace(/\s+/g,' ').trim();
+                    if (name.length > 40) name = name.slice(0,40) + '...';
                     const category = d.category || d.type || '';
                     return `${name || 'node'}<br/>${t.nodeTypeLabel}: ${category || 'entity'}`;
                 } else if (params.dataType === 'edge') {
@@ -907,13 +907,13 @@ function renderGraph(data) {
             categories: data.categories || [],
             roam: true,
             label: {
-                show: true,
+                show: (data.nodes || []).length <= 500,
                 color: '#e8f3ff',
                 textShadowColor: 'rgba(0,0,0,0.55)',
                 textShadowBlur: 4,
                 formatter: function(p){
                     const d = p.data || {};
-                    let name = (d.name || '').toString().replace(/\s+/g,' ').trim();
+                    let name = (d.fullName || d.name || '').toString().replace(/\s+/g,' ').trim();
                     if (name.length > 20) name = name.slice(0,20) + '...';
                     return name || '';
                 }
@@ -2134,9 +2134,18 @@ function getCategoryColor(category) {
         'entity': '#93c5fd',
         'community': '#fb7185',
         'keyword': '#f59e0b',
-        '主题社区': '#fb7185',
-        '关键词': '#f59e0b',
-        '属性': '#f472b6'
+        '\u4e3b\u9898\u793e\u533a': '#fb7185',
+        '\u5173\u952e\u8bcd': '#f59e0b',
+        '\u5c5e\u6027': '#f472b6',
+        '\u8bba\u6587': '#34d399',
+        '\u4f5c\u8005': '#74b9ff',
+        '\u673a\u6784': '#22d3ee',
+        '\u671f\u520a': '#f472b6',
+        '\u7814\u7a76\u65b9\u6cd5': '#fb7185',
+        '\u7814\u7a76\u4e3b\u9898': '#f59e0b',
+        '\u6559\u80b2\u9886\u57df': '#a78bfa',
+        '\u6559\u5b66\u573a\u666f': '#60a5fa',
+        '\u6280\u672f': '#fbbf24'
     };
     return colors[key] || colors[String(category || '').trim()] || '#93c5fd';
 }

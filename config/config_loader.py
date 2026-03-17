@@ -94,8 +94,10 @@ class RetrievalConfig:
     enable_query_enhancement: bool = True
     enable_reranking: bool = True
     enable_high_recall: bool = True
+    enable_diagnostics: bool = True
     enable_caching: bool = True
     cache_dir: str = "retriever/faiss_cache_new"
+    weak_relation_penalty: float = 0.2
     faiss: FAISSConfig = None
     agent: AgentConfig = None
     
@@ -176,7 +178,7 @@ class ConfigManager:
         self.output: Optional[OutputConfig] = None
         self.performance: Optional[PerformanceConfig] = None
         self.evaluation: Optional[EvaluationConfig] = None
-        # [新增] 存储当前活跃数据集的名称
+        # 当前活跃数据集名称
         self.active_dataset: str = "demo"
         self.load_config()
     
@@ -205,7 +207,7 @@ class ConfigManager:
     
     def _parse_config(self) -> None:
         """Parse the loaded configuration data into structured objects."""
-        #  解析 active_dataset
+        # 解析 active_dataset
         self.active_dataset = self.config_data.get("active_dataset", "demo")
         datasets_data = self.config_data.get("datasets", {})
         self.datasets = {

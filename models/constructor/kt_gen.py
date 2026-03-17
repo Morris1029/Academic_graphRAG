@@ -37,6 +37,7 @@ class KTBuilder:
         self.all_chunks = {}
         self.mode = mode or config.construction.mode
         self.doc_meta_by_chunk_id: Dict[str, Dict[str, Any]] = {}
+        self.chunk_audit_records: Dict[str, Dict[str, Any]] = {}
         self._entity_name_index: Dict[Tuple[str, str], str] = {}
         self.construction_cache_root = os.path.join(
             getattr(self.config.construction, "extraction_cache_dir", "output/construction_cache"),
@@ -70,6 +71,37 @@ class KTBuilder:
         self.rate_limit_lock = threading.Lock()
         self.request_times = deque()
         self.request_token_events = deque()
+        self.duplicate_doc_ids: Set[str] = set()
+        self.schema_type_aliases = {
+            "paper": "论文",
+            "author": "作者",
+            "organization": "机构",
+            "institution": "机构",
+            "journal": "期刊",
+            "technology": "技术",
+            "technique": "技术",
+            "method": "研究方法",
+            "framework": "研究方法",
+            "topic": "研究主题",
+            "theme": "研究主题",
+            "scenario": "教学场景",
+            "field": "教育领域",
+            "教学模式": "研究方法",
+            "人才培养模式": "研究方法",
+            "研究理论": "研究主题",
+            "教育理念": "研究主题",
+        }
+        self.generic_entity_name_blacklist = {
+            "教学模式",
+            "研究理论",
+            "教育理念",
+            "人才培养模式",
+        }
+        self.allowed_schema_node_types = {
+            str(node_type).strip()
+            for node_type in self.schema.get("Nodes", [])
+            if str(node_type).strip()
+        }
         self.cross_doc_stats = {
             "cross_doc_enabled": bool(getattr(self.config.construction, "cross_doc_enabled", True)),
             "bridge_batches_total": 0,
@@ -86,6 +118,86 @@ class KTBuilder:
             "llm_retries": 0,
             "parse_retries": 0,
         }
+
+    def _get_doc_meta(self, doc: Dict[str, Any]) -> Dict[str, Any]:
+        meta = doc.get("meta", {})
+        return meta if isinstance(meta, dict) else {}
+
+    def _get_document_uid(self, doc: Dict[str, Any]) -> str:
+        base_id = str(doc.get("id", "") or nanoid.generate(size=8))
+        if base_id not in self.duplicate_doc_ids:
+            return base_id
+
+        meta = self._get_doc_meta(doc)
+        signature = "|".join(
+            [
+                base_id,
+                str(meta.get("title", "")).strip(),
+                str(meta.get("source", "")).strip(),
+                str(meta.get("year", "")).strip(),
+                str(meta.get("authors", "")).strip(),
+            ]
+        )
+        digest = hashlib.md5(signature.encode("utf-8")).hexdigest()[:10]
+        return f"{base_id}__{digest}"
+
+    def _build_paper_anchor_key(self, entity_name: Any, chunk_id: Any) -> str:
+        if not chunk_id:
+            return ""
+        meta = self.doc_meta_by_chunk_id.get(str(chunk_id), {})
+        if not isinstance(meta, dict):
+            return ""
+        entity_key = self._normalize_entity_name(entity_name)
+        title_key = self._normalize_entity_name(meta.get("title", ""))
+        doc_uid = str(meta.get("doc_uid", "")).strip()
+        if entity_key and title_key and entity_key == title_key and doc_uid:
+            return f"paper_doc::{doc_uid}"
+        return ""
+
+    def _register_chunk_audit_entry(self, meta: Dict[str, Any], chunk_text: str) -> None:
+        doc_uid = str(meta.get("doc_uid", "")).strip()
+        if not doc_uid:
+            return
+        self.chunk_audit_records[doc_uid] = {
+            "doc_uid": doc_uid,
+            "source_doc_id": str(meta.get("source_doc_id", "")).strip(),
+            "title": str(meta.get("title", "")).strip(),
+            "year": str(meta.get("year", "")).strip(),
+            "source": str(meta.get("source", "")).strip(),
+            "authors": str(meta.get("authors", "")).strip(),
+            "chunk_written": bool(chunk_text),
+            "chunk_char_count": len(str(chunk_text or "")),
+        }
+
+    def _save_chunk_audit_file(self) -> None:
+        os.makedirs("output/chunks", exist_ok=True)
+        audit_path = f"output/chunks/{self.dataset_name}_chunk_audit.jsonl"
+        with open(audit_path, "w", encoding="utf-8") as f:
+            for record in sorted(self.chunk_audit_records.values(), key=lambda item: item.get("doc_uid", "")):
+                f.write(json.dumps(record, ensure_ascii=False) + "\n")
+        logger.info(f"Chunk audit saved to {audit_path} ({len(self.chunk_audit_records)} records)")
+
+    def _canonicalize_entity_type(self, entity_type: Any, entity_name: str = "") -> str:
+        raw = str(entity_type or "").strip()
+        if not raw:
+            return ""
+
+        lowered = raw.lower()
+        mapped = self.schema_type_aliases.get(lowered, self.schema_type_aliases.get(raw, raw))
+        if mapped in self.allowed_schema_node_types:
+            return mapped
+
+        logger.info(
+            "Dropping schema-outside entity type '%s' for entity '%s' in dataset '%s'",
+            raw,
+            str(entity_name or "").strip(),
+            self.dataset_name,
+        )
+        return ""
+
+    def _should_skip_entity_name(self, entity_name: Any) -> bool:
+        name = str(entity_name or "").strip()
+        return bool(name and name in self.generic_entity_name_blacklist)
 
     def load_schema(self, schema_path) -> Dict[str, Any]:
         try:
@@ -131,12 +243,15 @@ class KTBuilder:
         处理论文 JSON 结构。
         Chunk 保存逻辑：仅保留 Title + Abstract，用于检索。
         """
-        doc_id = str(doc.get("id", nanoid.generate(size=8)))
+        source_doc_id = str(doc.get("id", nanoid.generate(size=8)))
+        doc_id = self._get_document_uid(doc)
 
-        meta = doc.get("meta", {})
+        meta = dict(self._get_doc_meta(doc))
         title = meta.get("title", "")
         abstract = meta.get("abstract", "")
         chunk_content_text = f"Title: {title}\nAbstract: {abstract}"
+        meta["source_doc_id"] = source_doc_id
+        meta["doc_uid"] = doc_id
 
         chunk = {
             "id": doc_id,
@@ -147,6 +262,7 @@ class KTBuilder:
         with self.lock:
             self.all_chunks[doc_id] = chunk_content_text
             self.doc_meta_by_chunk_id[doc_id] = meta
+            self._register_chunk_audit_entry(meta, chunk_content_text)
 
         return [chunk], {doc_id: chunk}
 
@@ -184,7 +300,11 @@ class KTBuilder:
                 clean_text = str(chunk_text).replace('\n', ' \\n ')
                 f.write(f"id: {chunk_id}\tChunk: {clean_text}\n")
 
-        logger.info(f"Chunk data saved to {chunk_file} ({len(self.all_chunks)} chunks)")
+        logger.info(
+            f"Chunk data saved to {chunk_file} ({len(self.all_chunks)} unique chunks, "
+            f"{len(self.duplicate_doc_ids)} duplicated source ids normalized)"
+        )
+        self._save_chunk_audit_file()
 
     def _get_doc_cache_path(self, doc_id: str) -> str:
         safe_doc_id = re.sub(r"[^A-Za-z0-9._-]+", "_", str(doc_id or "unknown"))
@@ -208,9 +328,11 @@ class KTBuilder:
             json.dump(payload, f, ensure_ascii=False, indent=2)
 
     def _build_doc_cache_payload(self, doc: Dict[str, Any], chunks: List[Dict[str, Any]]) -> Dict[str, Any]:
-        doc_id = str(doc.get("id", chunks[0].get("id", "unknown") if chunks else "unknown"))
+        source_doc_id = str(doc.get("id", "unknown"))
+        doc_id = self._get_document_uid(doc) if doc else str(chunks[0].get("id", "unknown") if chunks else "unknown")
         return {
             "doc_id": doc_id,
+            "source_doc_id": source_doc_id,
             "meta": doc.get("meta", {}),
             "prompt_version": getattr(self.config.construction, "prompt_version", "v1"),
             "status": "pending",
@@ -422,7 +544,7 @@ class KTBuilder:
         chunk_id = props.get("chunk_id", props.get("chunk id", ""))
         return str(chunk_id).strip() if chunk_id is not None else ""
 
-    def _register_entity_index(self, entity_name: Any, node_id: str, entity_type: Any = None):
+    def _register_entity_index(self, entity_name: Any, node_id: str, entity_type: Any = None, chunk_id: Any = None):
         name_key = self._normalize_entity_name(entity_name)
         if not name_key:
             return
@@ -430,12 +552,26 @@ class KTBuilder:
         self._entity_name_index[(name_key, type_key)] = node_id
         # 同名无类型索引，便于兜底检索
         self._entity_name_index[(name_key, "")] = node_id
+        if self._is_paper_schema_type(entity_type):
+            paper_anchor = self._build_paper_anchor_key(entity_name, chunk_id)
+            if paper_anchor:
+                self._entity_name_index[(paper_anchor, type_key)] = node_id
+                self._entity_name_index[(paper_anchor, "")] = node_id
 
-    def _lookup_entity_node_id(self, entity_name: Any, entity_type: Any = None) -> Optional[str]:
+    def _lookup_entity_node_id(self, entity_name: Any, entity_type: Any = None, chunk_id: Any = None) -> Optional[str]:
         name_key = self._normalize_entity_name(entity_name)
         if not name_key:
             return None
         type_key = str(entity_type or "").strip().lower()
+        if self._is_paper_schema_type(entity_type):
+            paper_anchor = self._build_paper_anchor_key(entity_name, chunk_id)
+            if paper_anchor:
+                anchored = self._entity_name_index.get((paper_anchor, type_key))
+                if anchored:
+                    return anchored
+                anchored = self._entity_name_index.get((paper_anchor, ""))
+                if anchored:
+                    return anchored
         if type_key:
             exact = self._entity_name_index.get((name_key, type_key))
             if exact:
@@ -468,17 +604,31 @@ class KTBuilder:
     def _find_or_create_entity(self, entity_name: str, chunk_id: int, nodes_to_add: list,
                                entity_type: str = None) -> str:
         """Find existing entity or create a new one, returning the entity node ID."""
+        entity_type = self._canonicalize_entity_type(entity_type, entity_name)
         with self.lock:
-            entity_node_id = self._lookup_entity_node_id(entity_name, entity_type)
+            entity_node_id = self._lookup_entity_node_id(entity_name, entity_type, chunk_id)
             if not entity_node_id:
-                entity_node_id = next(
-                    (
-                        n
-                        for n, d in self.graph.nodes(data=True)
-                        if d.get("label") == "entity" and d["properties"]["name"] == entity_name
-                    ),
-                    None,
-                )
+                if self._is_paper_schema_type(entity_type):
+                    current_doc_uid = str(self.doc_meta_by_chunk_id.get(str(chunk_id), {}).get("doc_uid", "")).strip()
+                    entity_node_id = next(
+                        (
+                            n
+                            for n, d in self.graph.nodes(data=True)
+                            if d.get("label") == "entity"
+                            and d["properties"]["name"] == entity_name
+                            and str(d.get("properties", {}).get("doc_uid", "")).strip() == current_doc_uid
+                        ),
+                        None,
+                    )
+                else:
+                    entity_node_id = next(
+                        (
+                            n
+                            for n, d in self.graph.nodes(data=True)
+                            if d.get("label") == "entity" and d["properties"]["name"] == entity_name
+                        ),
+                        None,
+                    )
 
             if not entity_node_id:
                 entity_node_id = f"entity_{self.node_counter}"
@@ -486,11 +636,14 @@ class KTBuilder:
                 if entity_type:
                     properties["schema_type"] = entity_type
                 if self._is_paper_schema_type(entity_type):
+                    meta = self.doc_meta_by_chunk_id.get(str(chunk_id), {})
                     aliases = [str(entity_name)]
-                    title = self.doc_meta_by_chunk_id.get(str(chunk_id), {}).get("title")
+                    title = meta.get("title")
                     if title and str(title) not in aliases:
                         aliases.append(str(title))
                     properties["aliases"] = aliases
+                    properties["doc_uid"] = str(meta.get("doc_uid", "")).strip()
+                    properties["source_doc_id"] = str(meta.get("source_doc_id", "")).strip()
 
                 nodes_to_add.append((
                     entity_node_id,
@@ -500,10 +653,10 @@ class KTBuilder:
                         "level": 2
                     }
                 ))
-                self._register_entity_index(entity_name, entity_node_id, entity_type)
+                self._register_entity_index(entity_name, entity_node_id, entity_type, chunk_id)
                 self.node_counter += 1
             else:
-                self._register_entity_index(entity_name, entity_node_id, entity_type)
+                self._register_entity_index(entity_name, entity_node_id, entity_type, chunk_id)
 
         return entity_node_id
 
@@ -525,6 +678,8 @@ class KTBuilder:
         edges_to_add = []
 
         for entity, attributes in extracted_attr.items():
+            if self._should_skip_entity_name(entity):
+                continue
             for attr in attributes:
                 # Create attribute node
                 attr_node_id = f"attr_{self.node_counter}"
@@ -538,7 +693,7 @@ class KTBuilder:
                 ))
                 self.node_counter += 1
 
-                entity_type = entity_types.get(entity) if entity_types else None
+                entity_type = self._canonicalize_entity_type(entity_types.get(entity), entity) if entity_types else None
                 entity_node_id = self._find_or_create_entity(entity, chunk_id, nodes_to_add, entity_type)
                 edges_to_add.append((entity_node_id, attr_node_id, "has_attribute"))
 
@@ -555,9 +710,11 @@ class KTBuilder:
                 continue
 
             subj, pred, obj = validated_triple
+            if self._should_skip_entity_name(subj) or self._should_skip_entity_name(obj):
+                continue
 
-            subj_type = entity_types.get(subj) if entity_types else None
-            obj_type = entity_types.get(obj) if entity_types else None
+            subj_type = self._canonicalize_entity_type(entity_types.get(subj), subj) if entity_types else None
+            obj_type = self._canonicalize_entity_type(entity_types.get(obj), obj) if entity_types else None
 
             subj_node_id = self._find_or_create_entity(subj, chunk_id, nodes_to_add, subj_type)
             obj_node_id = self._find_or_create_entity(obj, chunk_id, nodes_to_add, obj_type)
@@ -608,7 +765,11 @@ class KTBuilder:
 
         new_schema_types = parsed_response.get("new_schema_types", {})
         if new_schema_types:
-            self._update_schema_with_new_types(new_schema_types)
+            logger.info(
+                "Ignoring LLM-proposed schema extensions for dataset '%s': %s",
+                self.dataset_name,
+                json.dumps(new_schema_types, ensure_ascii=False),
+            )
 
         entity_types = parsed_response.get("entity_types", {})
         attributes = parsed_response.get("attributes", {})
@@ -616,7 +777,9 @@ class KTBuilder:
 
         with self.lock:
             for entity, attrs in attributes.items():
-                entity_type = entity_types.get(entity)
+                if self._should_skip_entity_name(entity):
+                    continue
+                entity_type = self._canonicalize_entity_type(entity_types.get(entity), entity)
                 entity_id = self._find_or_create_entity_direct(entity, chunk_id, entity_type)
 
                 if isinstance(attrs, list):
@@ -645,8 +808,10 @@ class KTBuilder:
                     continue
 
                 src, rel, tgt = triple[0], triple[1], triple[2]
-                src_type = entity_types.get(src)
-                tgt_type = entity_types.get(tgt)
+                if self._should_skip_entity_name(src) or self._should_skip_entity_name(tgt):
+                    continue
+                src_type = self._canonicalize_entity_type(entity_types.get(src), src)
+                tgt_type = self._canonicalize_entity_type(entity_types.get(tgt), tgt)
                 src_id = self._find_or_create_entity_direct(src, chunk_id, src_type)
                 tgt_id = self._find_or_create_entity_direct(tgt, chunk_id, tgt_type)
                 self._add_edge_with_metadata(
@@ -661,16 +826,29 @@ class KTBuilder:
 
     def _find_or_create_entity_direct(self, entity_name: str, chunk_id: int, entity_type: str = None) -> str:
         """Find existing entity or create a new one directly in graph (for agent mode)."""
-        entity_node_id = self._lookup_entity_node_id(entity_name, entity_type)
+        entity_type = self._canonicalize_entity_type(entity_type, entity_name)
+        entity_node_id = self._lookup_entity_node_id(entity_name, entity_type, chunk_id)
         if not entity_node_id:
-            entity_node_id = next(
-                (
-                    n
-                    for n, d in self.graph.nodes(data=True)
-                    if d["properties"].get("name") == entity_name
-                ),
-                None,
-            )
+            if self._is_paper_schema_type(entity_type):
+                current_doc_uid = str(self.doc_meta_by_chunk_id.get(str(chunk_id), {}).get("doc_uid", "")).strip()
+                entity_node_id = next(
+                    (
+                        n
+                        for n, d in self.graph.nodes(data=True)
+                        if d["properties"].get("name") == entity_name
+                        and str(d.get("properties", {}).get("doc_uid", "")).strip() == current_doc_uid
+                    ),
+                    None,
+                )
+            else:
+                entity_node_id = next(
+                    (
+                        n
+                        for n, d in self.graph.nodes(data=True)
+                        if d["properties"].get("name") == entity_name
+                    ),
+                    None,
+                )
 
         if not entity_node_id:
             entity_node_id = f"entity_{self.node_counter}"
@@ -684,34 +862,50 @@ class KTBuilder:
             if entity_type:
                 properties["schema_type"] = entity_type
             if self._is_paper_schema_type(entity_type):
+                meta = self.doc_meta_by_chunk_id.get(str(chunk_id), {})
                 aliases = [str(entity_name)]
-                title = self.doc_meta_by_chunk_id.get(str(chunk_id), {}).get("title")
+                title = meta.get("title")
                 if title and str(title) not in aliases:
                     aliases.append(str(title))
                 properties["aliases"] = aliases
+                properties["doc_uid"] = str(meta.get("doc_uid", "")).strip()
+                properties["source_doc_id"] = str(meta.get("source_doc_id", "")).strip()
             self.graph.add_node(
                 entity_node_id,
                 label="entity",
                 properties=properties,
                 level=2
             )
-            self._register_entity_index(entity_name, entity_node_id, entity_type)
+            self._register_entity_index(entity_name, entity_node_id, entity_type, chunk_id)
             self.node_counter += 1
         else:
             # 如果节点已存在但标签仍是通用类型，尝试补充更具体的 schema_type
             node_props = self.graph.nodes[entity_node_id]["properties"]
             if entity_type and "schema_type" not in node_props:
                 node_props["schema_type"] = entity_type
+            if self._is_paper_schema_type(entity_type):
+                meta = self.doc_meta_by_chunk_id.get(str(chunk_id), {})
+                node_props["doc_uid"] = str(meta.get("doc_uid", node_props.get("doc_uid", ""))).strip()
+                node_props["source_doc_id"] = str(
+                    meta.get("source_doc_id", node_props.get("source_doc_id", ""))
+                ).strip()
             aliases = node_props.setdefault("aliases", [])
             if entity_name not in aliases:
                 aliases.append(entity_name)
-            self._register_entity_index(entity_name, entity_node_id, node_props.get("schema_type", entity_type))
+            self._register_entity_index(
+                entity_name,
+                entity_node_id,
+                node_props.get("schema_type", entity_type),
+                chunk_id,
+            )
 
         return entity_node_id
 
     def _process_attributes_agent(self, extracted_attr: dict, chunk_id: int, entity_types: dict = None):
         """Process extracted attributes in agent mode (direct graph operations)."""
         for entity, attributes in extracted_attr.items():
+            if self._should_skip_entity_name(entity):
+                continue
             for attr in attributes:
                 # Create attribute node
                 attr_node_id = f"attr_{self.node_counter}"
@@ -726,7 +920,7 @@ class KTBuilder:
                 )
                 self.node_counter += 1
 
-                entity_type = entity_types.get(entity) if entity_types else None
+                entity_type = self._canonicalize_entity_type(entity_types.get(entity), entity) if entity_types else None
                 entity_node_id = self._find_or_create_entity_direct(entity, chunk_id, entity_type)
                 self._add_edge_with_metadata(
                     entity_node_id,
@@ -746,9 +940,11 @@ class KTBuilder:
                 continue
 
             subj, pred, obj = validated_triple
+            if self._should_skip_entity_name(subj) or self._should_skip_entity_name(obj):
+                continue
 
-            subj_type = entity_types.get(subj) if entity_types else None
-            obj_type = entity_types.get(obj) if entity_types else None
+            subj_type = self._canonicalize_entity_type(entity_types.get(subj), subj) if entity_types else None
+            obj_type = self._canonicalize_entity_type(entity_types.get(obj), obj) if entity_types else None
 
             # Find or create subject and object entities
             subj_node_id = self._find_or_create_entity_direct(subj, chunk_id, subj_type)
@@ -901,8 +1097,8 @@ class KTBuilder:
         paper_by_chunk, paper_by_title = self._build_paper_node_indexes()
         units: List[Dict[str, Any]] = []
         for doc in documents:
-            doc_id = str(doc.get("id", ""))
-            meta = doc.get("meta", doc if isinstance(doc, dict) else {})
+            doc_id = self._get_document_uid(doc)
+            meta = self._get_doc_meta(doc)
             title = str(meta.get("title", "")).strip()
             title_key = self._normalize_entity_name(title)
             paper_node = paper_by_chunk.get(doc_id) or paper_by_title.get(title_key)
@@ -1295,7 +1491,7 @@ class KTBuilder:
             return {"doc_id": "unknown", "status": "failed", "error": "Empty document"}
 
         chunks, _ = self.chunk_text(doc)
-        doc_id = str(doc.get("id", chunks[0].get("id", "unknown") if chunks else "unknown"))
+        doc_id = self._get_document_uid(doc)
         cached_payload = self._load_doc_extraction_cache(doc_id) if self.resume_enabled else None
 
         if self.resume_enabled and self.replay_cached_extractions and self._all_cached_chunks_successful(cached_payload):
@@ -1368,7 +1564,7 @@ class KTBuilder:
         if not doc:
             return
         chunks, _ = self.chunk_text(doc)
-        doc_id = str(doc.get("id", chunks[0].get("id", "unknown") if chunks else "unknown"))
+        doc_id = self._get_document_uid(doc)
         payload = self._load_doc_extraction_cache(doc_id)
         if not isinstance(payload, dict):
             logger.warning(f"No extraction cache found for document {doc_id}, skipping graph replay")
@@ -1393,11 +1589,21 @@ class KTBuilder:
         start_construct = time.time()
         total_docs = len(documents)
         self.cross_doc_stats["documents_total"] = total_docs
+        doc_id_counts = defaultdict(int)
+        for doc in documents:
+            doc_id_counts[str(doc.get("id", ""))] += 1
+        self.duplicate_doc_ids = {doc_id for doc_id, count in doc_id_counts.items() if doc_id and count > 1}
 
         logger.info(
             f"Starting extraction for {total_docs} documents with {max_workers} workers "
             f"(max concurrent LLM requests: {self.max_concurrent_llm_requests})..."
         )
+        if self.duplicate_doc_ids:
+            logger.warning(
+                "Detected %d duplicated source ids in dataset '%s'; duplicate documents will use hashed doc_uids.",
+                len(self.duplicate_doc_ids),
+                self.dataset_name,
+            )
 
         completed_count = 0
         failed_count = 0

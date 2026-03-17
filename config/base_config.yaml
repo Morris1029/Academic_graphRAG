@@ -7,13 +7,13 @@ construction:
   batch_size_docs: 24
   token_budget_per_batch: 12000
   bridge_relations:
-  # 扩展、对比、复用
-  - "\u6269\u5c55"
-  - "\u5bf9\u6bd4"
-  - "\u590d\u7528"
+    # 扩展、对比、复用
+    - "扩展"
+    - "对比"
+    - "复用"
   prompt_version: v1
   datasets_no_chunk:
-  - demo
+    - demo
   max_workers: 16
   max_concurrent_llm_requests: 4
   requests_per_minute: 120
@@ -55,7 +55,6 @@ embeddings:
 nlp:
   spacy_model: zh_core_web_lg
 
-
 output:
   base_dir: output
   chunks_dir: output/chunks
@@ -63,107 +62,117 @@ output:
   logs_dir: output/logs
   save_chunk_details: true
   save_intermediate_results: true
+
 performance:
   batch_size: 16
   max_workers: 32
   memory_optimization: true
   parallel_processing: true
+
 prompts:
   construction:
     # NoAgent mode prompts
-    general:  "你是一个专业的学术文献分析专家。你的任务是从论文元数据中提取实体（Entity）和三元组（Relation）。。\n\n
-      请严格映射实体类型到以下定义中，不得随意创造 Top-level 类型：：\n
-      ```{schema}```\n
-      【提取指南】：\n
-      1. 核心实体：\n
-         - '论文'：必须提取，作为中心节点。\n
-         - '作者'：从标题和摘要中提取（如“谣言检测”、“实体识别”）。\n
-         - '方法论'/'模型'：提取具体的技术名词（如“Transformer”、“两阶段大模型”）。\n
-         - '数据集'/'评价指标'：如果摘要中明确提到。\n
-      2. 关系构建：\n
-         - (论文) -[提出]-> (模型)\n
-         - (模型) -[解决]-> (挑战痛点)\n
-         - (论文) -[采用]-> (方法论)\n
-         - (模型) -[达到效果]-> (数值+指标)\n
-         - (作者) -[撰写]-> (论文)\n
-      3. 作者与机构：\n
-         - 仅提取前三位作者，防止图谱过于稠密。\n
-         - 机构仅提取一级单位（如“中国地质大学”，而非“...学院”）。\n
-      4. 去噪：不要提取泛泛之词（如“人工智能”、“大数据”、“方法”），只提取具体的专有名词。\n\n
-      【输入内容】：\n```{chunk}```\n\n
-      请以 JSON 格式返回结果，包含 'attributes', 'triples', 'entity_types'。
-      "
-    # Agent mode prompts (with schema evolution)  目前是使用这个
-    general_agent:  "你是一个专业的学术文献分析专家。你的任务是从论文元数据中提取实体（Entity）和三元组（Relation）。。\n\n
-     1. Schema 约束 
-      请严格映射实体类型到以下定义中，不得随意创造 Top-level 类型：\n
-      ```{schema}```\n
-     2. 提取准则
-     - 实体命名：实体名应为具体的专有名词（如 \"Transformer\"），避免使用长句。\n
-     - 关系标准化：必须使用 Schema 中定义的标准谓语。例如：(作者)-[隶属]->(机构)，(论文)-[发表于]->(期刊)。
-     - 属性精简：Attributes 仅记录关键特征。严禁全文复制摘要，描述性属性不得超过 50 字。
-     - 去噪与去冗：仅提取前三位作者和一级单位名称。禁止提取循环关系（即实体1和实体2不能相同）。忽略\"方法\"、\"研究\"等泛泛之词。
-     - 灵活扩展：如果文本中包含非常有价值的知识，但 Schema 中未定义，你可以提取它并在 \"new_schema_types\" 中记录。
-     3.输出格式要求
-     【输入内容】：
+    general: |
+      你是一个专业的学术文献分析专家。你的任务是从论文元数据中提取实体（Entity）和三元组（Relation）。
+
+      请严格将实体类型映射到以下 Schema，不得自行创造新类型：
+      ```{schema}```
+
+      【提取准则】
+      1. 核心实体：
+         - “论文”：必须提取，作为中心节点。
+         - “作者”：提取前 3 位作者。
+         - “机构”：只提取一级机构名称。
+         - “技术 / 研究方法 / 研究主题 / 教学场景 / 教育领域 / 期刊”：按 Schema 就近映射。
+      2. 关系标准化：
+         - 只使用 Schema 中已有关系，如“撰写 / 隶属 / 发表于 / 应用于 / 聚焦 / 采用 / 提出”。
+      3. 去噪：
+         - 不要抽取过于泛化的词，如“人工智能”“研究”“方法”等。
+         - 不要输出循环关系，三元组两端实体不能相同。
+      4. 属性：
+         - 仅保留关键属性，如年份、来源、关键词、定义。
+
+      【输入内容】
+      ```{chunk}```
+
+      请仅返回 JSON，包含以下字段：
+      - "attributes"
+      - "triples"
+      - "entity_types"
+      - "new_schema_types"（固定返回空结构，不新增 schema）
+
+    # Agent mode prompts
+    general_agent: |
+      你是一个专业的学术文献分析专家。你的任务是从论文元数据中提取实体（Entity）和三元组（Relation）。
+
+      你必须严格遵守以下 Schema，不得新增节点类型、关系类型或属性类型：
+      ```{schema}```
+
+      【抽取规则】
+      1. 实体命名必须具体、简洁，优先使用专有名词。
+      2. 实体类型必须映射到现有 Schema；若文本中出现“教学模式、研究理论、教育理念、人才培养模式”等概念，请映射到最接近的既有类型，而不是创建新类型。
+      3. 关系必须使用 Schema 中已有关系。
+      4. 属性只保留关键短语，不得整段复制摘要。
+      5. 作者仅保留前 3 位，机构仅保留一级机构名称。
+
+      【输入内容】
       {chunk}
-     【输出格式】
-      必须且仅返回 JSON 格式数据，包含以下字段：
-      - \"attributes\": 字典格式，Key 为实体名，Value 为属性描述列表。
-      - \"triples\": 列表格式，每个元素为 `[实体1, 关系, 实体2]` 的三元组数组。
-      - \"entity_types\": 字典格式，Key 为实体名，Value 为 Schema 中的 Node 类型。
-      - \"new_schema_types\": 如果发现了新类型，请记录。
-     【输出示例】：
-     {{
-      \"attributes\": {{
-        \"Attention is All You Need\": [\"年份: 2017\", \"来源: JMLR\", \"关键词: Attention, Deep Learning, NLP\"],
-        \"Transformer\": [\"定义: 基于注意力机制的深度学习模型\"]
-      }},
-      \"triples\": [
-        [\"Ashish Vaswani\", \"撰写\", \"Attention is All You Need\"],
-        [\"Attention is All You Need\", \"提出\", \"Transformer\"],
-        [\"Transformer\", \"应用于\", \"natural language processing\"]
-      ],
-      \"entity_types\": {{
-        \"Ashish Vaswani\": \"作者\",
-        \"Attention is All You Need\": \"论文\",
-        \"Transformer\": \"技术\",
-        \"natural language processing\": \"研究主题\"
-      }},
-      \"new_schema_types\": {{
-          \"nodes\": [],
-          \"relations\": [],
-          \"attributes\": []
-      }}
-    }}
-"
+
+      【输出格式】
+      必须且仅返回 JSON，包含：
+      - "attributes": {{实体名: [属性1, 属性2]}}
+      - "triples": [[实体1, 关系, 实体2], ...]
+      - "entity_types": {{实体名: 类型}}
+      - "new_schema_types": {{"nodes": [], "relations": [], "attributes": []}}
 
   decomposition:
-    general: "你是一个学术问题拆解大师。你的任务是将复杂的用户问题拆解为多个可以通过图谱检索或文档阅读解决的子问题。\n\n
-     图本体模式（Schema）：\n{ontology}\n\n
-      【拆解原则】：\n
-      1. 对于简单问题（1-2跳），返回原始问题作为单个子问题。\n
-      2.**时序拆解**：如果问题涉及发展脉络，按时间段拆解（如“2020年前”、“2020年后”）。\n
-      3. **要素拆解**：如果问题涉及综述，拆解为“使用了什么模型”、“解决了什么问题”、“效果如何”三个维度。\n
-      4. **对比拆解**：如果问题是比较A和B，拆解为“A的特点”、“B的特点”、“A与B的差异”。\n\n
-      5. **子问题要求**：  - 明确且专注于一个事实或关系，通过识别所有实体、关系和推理步骤\n      - 明确引用原始问题中的实体和关系\n      - 设计为检索最终答案所需的相关知识\n\
-      6. **Schema识别**：分析问题并识别所有可能涉及的schema类型\n\n
-      【问题】：{question}\n\n
-      请返回 JSON 对象：\n{{\n  \"sub_questions\": [\n    {{\"sub-question\": \"具体子问题1\"}},\n    {{\"sub-question\": \"具体子问题2\"}}\n  ],\n  \"involved_types\": {{\n    \"nodes\": [\"涉及的实体类型\"],\n    \"relations\": [\"涉及的关系\"]\n  }}\n}}"
-      
+    general: |
+      你是一个学术问题拆解助手。请将用户问题拆解成适合知识图谱检索的子问题，并识别涉及的 schema 类型。
+
+      图谱 Schema：
+      {ontology}
+
+      【拆解原则】
+      1. 如果问题是简单事实题，只返回 1 个子问题。
+      2. 如果问题涉及比较、综述、发展脉络，再拆成多个子问题。
+      3. 子问题必须尽量贴近图谱能回答的事实关系，例如：
+         - 谁撰写了某篇论文
+         - 某论文提出了什么方法或框架
+         - 某论文发表于什么期刊
+         - 某论文聚焦什么研究主题、教育领域或教学场景
+      4. involved_types 只填写最可能涉及的节点类型与关系类型。
+
+      问题：{question}
+
+      请仅返回 JSON：
+      {{
+        "sub_questions": [
+          {{"sub-question": "子问题 1"}}
+        ],
+        "involved_types": {{
+          "nodes": ["相关节点类型"],
+          "relations": ["相关关系类型"]
+        }}
+      }}
+
   retrieval:
-    general: "你是一个严谨的学术科研助手。请根据提供的【检索上下文】回答用户问题。\n\n
-      【检索上下文】：\n{context}\n\n
-      【回答要求】：\n
-      1. **证据来源**：证据可以来自 Triples 或 Chunks；事实类问题优先使用结构化 Triples（如“作者-撰写-论文”“论文-提出-框架”）。\n
-      2. **引用方式**：每个关键结论后追加【证据: ...】。\n
-      - Triples 证据示例：`【证据: 许晟-撰写-AIGC赋能生物工程教育的范式重构——一个“认知-实践-伦理”整合框架】`\n
-      - Chunks 证据示例：`【证据: Chunk《AIGC赋能生物工程教育的范式重构——一个“认知-实践-伦理”整合框架》】`\n
-      3. **结构化输出**：综述类问题使用 markdown 列表或表格；事实问答先给直接答案，再给简短证据说明。\n
-      4. **区分事实与推断**：明确标注哪些是上下文事实，哪些是你的总结。\n
-      5. **禁止编造**：只有在 Triples 与 Chunks 都无法支撑问题关键事实时，才回答“现有资料不足以回答”。\n\n
-      【用户问题】：{question}\n\n
-      【回答】：\n"
+    general: |
+      你是一个严谨的学术科研助手。请根据提供的【检索上下文】回答用户问题。
+
+      【检索上下文】：
+      {context}
+
+      【回答要求】
+      1. 事实类问题优先使用结构化 Triples 作为证据。
+      2. 每个关键结论后追加【证据: ...】。
+      3. 如果上下文不足，明确回答“现有资料不足以回答”，不要编造。
+      4. 先给直接答案，再补一句简短说明；若是综述类问题可用列表。
+      5. 区分“上下文事实”和“你的总结”，不要把推断当作事实。
+
+      【用户问题】：
+      {question}
+
+      【回答】：
 
 retrieval:
   agent:
@@ -172,6 +181,7 @@ retrieval:
     max_steps: 1
   cache_dir: retriever/faiss_cache_new
   enable_caching: true
+  enable_diagnostics: true
   enable_high_recall: true
   enable_query_enhancement: true
   enable_reranking: true
@@ -183,6 +193,8 @@ retrieval:
   similarity_threshold: 0.3
   top_k: 20
   top_k_filter: 20
+  weak_relation_penalty: 0.2
+
 triggers:
   constructor_trigger: true
   mode: agent  # set noagent to speed up
