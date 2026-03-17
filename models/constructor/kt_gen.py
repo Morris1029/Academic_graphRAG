@@ -1,11 +1,11 @@
-import json
+﻿import json
 import os
 import threading
 import time
 import hashlib
 import re
 from concurrent import futures
-from collections import defaultdict
+from collections import defaultdict, deque
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 import nanoid
@@ -30,13 +30,46 @@ class KTBuilder:
         self.datasets_no_chunk = config.construction.datasets_no_chunk
         self.token_len = 0
         self.lock = threading.Lock()
-        self.llm_client = call_llm_api.LLMCompletionCall(scope="kg")
+        self.llm_client = call_llm_api.LLMCompletionCall(
+            scope="kg",
+            timeout_seconds=float(getattr(config.construction, "llm_timeout_seconds", 90)),
+        )
         self.all_chunks = {}
         self.mode = mode or config.construction.mode
         self.doc_meta_by_chunk_id: Dict[str, Dict[str, Any]] = {}
         self._entity_name_index: Dict[Tuple[str, str], str] = {}
-        self.bridge_cache_dir = os.path.join("output", "construction_cache", self.dataset_name)
+        self.construction_cache_root = os.path.join(
+            getattr(self.config.construction, "extraction_cache_dir", "output/construction_cache"),
+            self.dataset_name,
+        )
+        self.bridge_cache_dir = self.construction_cache_root
+        self.doc_extraction_cache_dir = os.path.join(self.construction_cache_root, "doc_extraction")
         os.makedirs(self.bridge_cache_dir, exist_ok=True)
+        os.makedirs(self.doc_extraction_cache_dir, exist_ok=True)
+        self.resume_enabled = bool(getattr(self.config.construction, "resume_enabled", True))
+        self.replay_cached_extractions = bool(getattr(self.config.construction, "replay_cached_extractions", True))
+        self.max_concurrent_llm_requests = max(
+            1, int(getattr(self.config.construction, "max_concurrent_llm_requests", 4))
+        )
+        self.requests_per_minute = max(0, int(getattr(self.config.construction, "requests_per_minute", 120)))
+        self.tokens_per_minute_budget = max(
+            0, int(getattr(self.config.construction, "tokens_per_minute_budget", 0))
+        )
+        self.retry_attempts = max(1, int(getattr(self.config.construction, "retry_attempts", 3)))
+        self.retry_backoff_base_seconds = max(
+            0.1, float(getattr(self.config.construction, "retry_backoff_base_seconds", 2.0))
+        )
+        self.retry_backoff_max_seconds = max(
+            self.retry_backoff_base_seconds,
+            float(getattr(self.config.construction, "retry_backoff_max_seconds", 20.0)),
+        )
+        self.llm_timeout_seconds = max(
+            1.0, float(getattr(self.config.construction, "llm_timeout_seconds", 90))
+        )
+        self.llm_request_semaphore = threading.Semaphore(self.max_concurrent_llm_requests)
+        self.rate_limit_lock = threading.Lock()
+        self.request_times = deque()
+        self.request_token_events = deque()
         self.cross_doc_stats = {
             "cross_doc_enabled": bool(getattr(self.config.construction, "cross_doc_enabled", True)),
             "bridge_batches_total": 0,
@@ -44,6 +77,14 @@ class KTBuilder:
             "bridge_batches_failed": 0,
             "bridge_edges_added": 0,
             "bridge_edges_fallback": 0,
+            "documents_total": 0,
+            "documents_extracted": 0,
+            "documents_loaded_from_cache": 0,
+            "documents_failed": 0,
+            "documents_applied": 0,
+            "documents_apply_failed": 0,
+            "llm_retries": 0,
+            "parse_retries": 0,
         }
 
     def load_schema(self, schema_path) -> Dict[str, Any]:
@@ -57,7 +98,7 @@ class KTBuilder:
     def _generate_llm_input(self, chunk: Dict) -> str:
         """
         将结构化的论文 JSON 转为 LLM 易理解的字符串格式，
-        用于图谱构建（包含完整元数据）。
+        用于图谱构建，包含完整元数据信息。
         """
         if not isinstance(chunk, dict):
             return str(chunk)
@@ -88,7 +129,7 @@ class KTBuilder:
     def chunk_text(self, doc: Dict) -> Tuple[List[Dict], Dict[str, Dict]]:
         """
         处理论文 JSON 结构。
-        Chunk 保存逻辑：仅保留 Title + Abstract（用于检索）。
+        Chunk 保存逻辑：仅保留 Title + Abstract，用于检索。
         """
         doc_id = str(doc.get("id", nanoid.generate(size=8)))
 
@@ -136,26 +177,157 @@ class KTBuilder:
         os.makedirs("output/chunks", exist_ok=True)
         chunk_file = f"output/chunks/{self.dataset_name}.txt"
 
-        # 简单的写入逻辑，覆盖模式以避免重复
+        # 简单写入逻辑，使用覆盖模式避免重复
         with open(chunk_file, "w", encoding="utf-8") as f:
             for chunk_id, chunk_text in self.all_chunks.items():
-                # 移除换行符以免破坏格式
+                # 移除换行符以避免破坏格式
                 clean_text = str(chunk_text).replace('\n', ' \\n ')
                 f.write(f"id: {chunk_id}\tChunk: {clean_text}\n")
 
         logger.info(f"Chunk data saved to {chunk_file} ({len(self.all_chunks)} chunks)")
 
-    def extract_with_llm(self, prompt: str):
-        response = self.llm_client.call_api(prompt)
-        # 增加 Token 计算
-        self.token_len += self.token_cal(prompt + str(response))
-        # --- 打印 LLM 返回结果到控制台 ---
-        print("\n" + "=" * 50)
-        print(f"DEBUG: LLM Response for Prompt (first 100 chars): {prompt[:100]}...")
-        print(f"DEBUG: Raw Response: {response}")
-        print("=" * 50 + "\n")
-        return response
+    def _get_doc_cache_path(self, doc_id: str) -> str:
+        safe_doc_id = re.sub(r"[^A-Za-z0-9._-]+", "_", str(doc_id or "unknown"))
+        return os.path.join(self.doc_extraction_cache_dir, f"{safe_doc_id}.json")
 
+    def _load_doc_extraction_cache(self, doc_id: str) -> Optional[Dict[str, Any]]:
+        cache_path = self._get_doc_cache_path(doc_id)
+        if not os.path.exists(cache_path):
+            return None
+        try:
+            with open(cache_path, "r", encoding="utf-8") as f:
+                payload = json.load(f)
+            return payload if isinstance(payload, dict) else None
+        except Exception as e:
+            logger.warning(f"Failed to load extraction cache for {doc_id}: {type(e).__name__}: {e}")
+            return None
+
+    def _save_doc_extraction_cache(self, doc_id: str, payload: Dict[str, Any]) -> None:
+        cache_path = self._get_doc_cache_path(doc_id)
+        with open(cache_path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, indent=2)
+
+    def _build_doc_cache_payload(self, doc: Dict[str, Any], chunks: List[Dict[str, Any]]) -> Dict[str, Any]:
+        doc_id = str(doc.get("id", chunks[0].get("id", "unknown") if chunks else "unknown"))
+        return {
+            "doc_id": doc_id,
+            "meta": doc.get("meta", {}),
+            "prompt_version": getattr(self.config.construction, "prompt_version", "v1"),
+            "status": "pending",
+            "timestamp": time.time(),
+            "chunks": [
+                {
+                    "chunk_id": str(chunk.get("id", "")),
+                    "chunk_text": chunk.get("text", ""),
+                    "status": "pending",
+                    "attempt_count": 0,
+                    "parsed_response": None,
+                    "error": None,
+                }
+                for chunk in chunks
+            ],
+        }
+
+    def _all_cached_chunks_successful(self, payload: Optional[Dict[str, Any]]) -> bool:
+        if not isinstance(payload, dict):
+            return False
+        chunks = payload.get("chunks", [])
+        return bool(chunks) and all(
+            isinstance(item, dict) and item.get("status") == "success" and item.get("parsed_response")
+            for item in chunks
+        )
+
+    def _prune_rate_limit_windows(self, now: float) -> None:
+        while self.request_times and now - self.request_times[0] >= 60:
+            self.request_times.popleft()
+        while self.request_token_events and now - self.request_token_events[0][0] >= 60:
+            self.request_token_events.popleft()
+
+    def _wait_for_llm_slot(self, prompt_tokens: int) -> None:
+        while True:
+            sleep_for = 0.0
+            with self.rate_limit_lock:
+                now = time.monotonic()
+                self._prune_rate_limit_windows(now)
+                req_ok = self.requests_per_minute <= 0 or len(self.request_times) < self.requests_per_minute
+                token_sum = sum(tokens for _, tokens in self.request_token_events)
+                token_ok = (
+                    self.tokens_per_minute_budget <= 0
+                    or token_sum + prompt_tokens <= self.tokens_per_minute_budget
+                )
+                if req_ok and token_ok:
+                    self.request_times.append(now)
+                    if self.tokens_per_minute_budget > 0:
+                        self.request_token_events.append((now, prompt_tokens))
+                    return
+
+                candidate_delays = []
+                if self.requests_per_minute > 0 and self.request_times:
+                    candidate_delays.append(max(0.05, 60 - (now - self.request_times[0])))
+                if self.tokens_per_minute_budget > 0 and self.request_token_events:
+                    candidate_delays.append(max(0.05, 60 - (now - self.request_token_events[0][0])))
+                sleep_for = min(candidate_delays) if candidate_delays else 0.1
+            time.sleep(sleep_for)
+
+    def _is_retryable_llm_error(self, error: Exception) -> bool:
+        message = str(error).lower()
+        retry_markers = [
+            "429",
+            "rate limit",
+            "too many requests",
+            "timeout",
+            "timed out",
+            "temporarily unavailable",
+            "server error",
+            "bad gateway",
+            "service unavailable",
+            "gateway timeout",
+            "connection",
+            "reset by peer",
+            "overloaded",
+        ]
+        return any(marker in message for marker in retry_markers)
+
+    def _backoff_seconds(self, attempt: int) -> float:
+        raw = self.retry_backoff_base_seconds * (2 ** max(0, attempt - 1))
+        return min(self.retry_backoff_max_seconds, raw)
+
+    def extract_with_llm(self, prompt: str):
+        prompt_tokens = self.token_cal(prompt)
+        last_error: Optional[Exception] = None
+
+        for attempt in range(1, self.retry_attempts + 1):
+            try:
+                self._wait_for_llm_slot(prompt_tokens)
+                with self.llm_request_semaphore:
+                    response = self.llm_client.call_api(
+                        prompt,
+                        timeout_seconds=self.llm_timeout_seconds,
+                    )
+                self.token_len += self.token_cal(prompt + str(response))
+                print("\n" + "=" * 50)
+                print(f"DEBUG: LLM Response for Prompt (first 100 chars): {prompt[:100]}...")
+                print(f"DEBUG: Raw Response: {response}")
+                print("=" * 50 + "\n")
+                return response
+            except Exception as e:
+                last_error = e
+                if attempt >= self.retry_attempts or not self._is_retryable_llm_error(e):
+                    logger.error(
+                        f"LLM extraction failed after {attempt} attempt(s): {type(e).__name__}: {e}"
+                    )
+                    raise
+                self.cross_doc_stats["llm_retries"] += 1
+                backoff = self._backoff_seconds(attempt)
+                logger.warning(
+                    f"Retryable LLM error on attempt {attempt}/{self.retry_attempts}: "
+                    f"{type(e).__name__}: {e}. Backing off {backoff:.1f}s"
+                )
+                time.sleep(backoff)
+
+        if last_error is not None:
+            raise last_error
+        raise RuntimeError("LLM extraction failed without response")
 
     def token_cal(self, text: str):
         try:
@@ -170,8 +342,7 @@ class KTBuilder:
         # 将 Chunk 数据转换为 LLM 易读的字符串
         chunk_str = self._generate_llm_input(chunk)
 
-        # 强制使用 'academic' 或 'general'，你可以根据需要修改
-        # 如果配置文件中有 'academic'，这里最好写死或者动态判断
+        # 当前统一使用 general/general_agent，可按数据集再扩展
         prompt_type = "general"
         if self.mode == "agent":
             prompt_type = f"{prompt_type}_agent"
@@ -201,27 +372,23 @@ class KTBuilder:
 
     # ---  完善解析逻辑，去掉内部的 Token 统计 ---
     def _validate_and_parse_llm_response(self, llm_response: str) -> dict:
-        """解析并校验 LLM 返回的 JSON 字符串"""
+        """Parse and validate JSON returned by the LLM."""
         if not llm_response:
             return None
         try:
-            # 移除之前的 prompt 参数，这里只负责解析
             return json_repair.loads(llm_response)
         except Exception as e:
             logger.error(f"JSON Repair failed: {e}")
             return None
 
     def _normalize_entity_name(self, name: Any) -> str:
-        """规范化实体名，便于同名去重与索引。"""
+        """Normalize entity names for stable indexing and deduplication."""
         text = str(name or "").strip()
         text = re.sub(r"\s+", " ", text)
         return text.lower()
 
     def _normalize_relation_name(self, relation: Any) -> str:
-        """
-        关系词最小归一化：保留原中文关系，仅做必要同义合并。
-        不做中文关系英文化，避免语义漂移。
-        """
+        """Normalize relation names while keeping the original Chinese labels."""
         raw = str(relation or "").strip()
         if not raw:
             return raw
@@ -238,7 +405,7 @@ class KTBuilder:
         return synonym_map.get(raw, raw)
 
     def _is_paper_schema_type(self, schema_type: Any) -> bool:
-        """识别论文节点类型，兼容中文与英文。"""
+        """Detect whether a schema type represents a paper node."""
         text = str(schema_type or "").strip().lower()
         return text in {"论文", "paper"}
 
@@ -286,7 +453,7 @@ class KTBuilder:
         source_paper_ids: Optional[List[str]] = None,
         reason: str = "",
     ):
-        """统一写边并附加可选元数据，保证旧读取路径兼容。"""
+        """Add an edge with optional metadata while keeping legacy readers compatible."""
         edge_payload = {
             "relation": self._normalize_relation_name(relation),
             "relation_origin": relation_origin,
@@ -435,6 +602,63 @@ class KTBuilder:
                     source_paper_ids=[str(id)],
                 )
 
+    def _apply_parsed_response(self, parsed_response: Dict[str, Any], chunk_id: str) -> None:
+        if not parsed_response:
+            return
+
+        new_schema_types = parsed_response.get("new_schema_types", {})
+        if new_schema_types:
+            self._update_schema_with_new_types(new_schema_types)
+
+        entity_types = parsed_response.get("entity_types", {})
+        attributes = parsed_response.get("attributes", {})
+        triples = parsed_response.get("triples", [])
+
+        with self.lock:
+            for entity, attrs in attributes.items():
+                entity_type = entity_types.get(entity)
+                entity_id = self._find_or_create_entity_direct(entity, chunk_id, entity_type)
+
+                if isinstance(attrs, list):
+                    for attr in attrs:
+                        safe_attr = str(attr) if isinstance(attr, dict) else attr
+                        attr_id = f"attr_{self.node_counter}"
+                        self.graph.add_node(
+                            attr_id,
+                            label="attribute",
+                            properties={"name": safe_attr, "chunk_id": chunk_id},
+                            level=1,
+                        )
+                        self._add_edge_with_metadata(
+                            entity_id,
+                            attr_id,
+                            "has_attribute",
+                            relation_origin="doc_local",
+                            confidence=0.7,
+                            evidence_chunk_ids=[str(chunk_id)],
+                            source_paper_ids=[str(chunk_id)],
+                        )
+                        self.node_counter += 1
+
+            for triple in triples:
+                if len(triple) < 3:
+                    continue
+
+                src, rel, tgt = triple[0], triple[1], triple[2]
+                src_type = entity_types.get(src)
+                tgt_type = entity_types.get(tgt)
+                src_id = self._find_or_create_entity_direct(src, chunk_id, src_type)
+                tgt_id = self._find_or_create_entity_direct(tgt, chunk_id, tgt_type)
+                self._add_edge_with_metadata(
+                    src_id,
+                    tgt_id,
+                    rel,
+                    relation_origin="doc_local",
+                    confidence=0.75,
+                    evidence_chunk_ids=[str(chunk_id)],
+                    source_paper_ids=[str(chunk_id)],
+                )
+
     def _find_or_create_entity_direct(self, entity_name: str, chunk_id: int, entity_type: str = None) -> str:
         """Find existing entity or create a new one directly in graph (for agent mode)."""
         entity_node_id = self._lookup_entity_node_id(entity_name, entity_type)
@@ -454,7 +678,7 @@ class KTBuilder:
                 "name": entity_name,
                 "chunk id": chunk_id
             }
-            # # 核心修改：如果 entity_type 存在，就用它做 label，否则才用 "entity"
+            # # 鏍稿績淇敼锛氬鏋?entity_type 瀛樺湪锛屽氨鐢ㄥ畠鍋?label锛屽惁鍒欐墠鐢?"entity"
             # display_label = entity_type if entity_type else "entity"
             # properties = {"name": entity_name, "chunk id": chunk_id,"schema_type": entity_type}
             if entity_type:
@@ -474,7 +698,7 @@ class KTBuilder:
             self._register_entity_index(entity_name, entity_node_id, entity_type)
             self.node_counter += 1
         else:
-            # 如果节点已存在但标签是通用的，尝试更新它
+            # 如果节点已存在但标签仍是通用类型，尝试补充更具体的 schema_type
             node_props = self.graph.nodes[entity_node_id]["properties"]
             if entity_type and "schema_type" not in node_props:
                 node_props["schema_type"] = entity_type
@@ -546,7 +770,7 @@ class KTBuilder:
         prompt = self._get_construction_prompt(chunk)
 
         # 2. 调用 LLM
-        # print(f"DEBUG: Processing {chunk_id}...") # 调试用
+        # print(f"DEBUG: Processing {chunk_id}...")  # 调试用
         llm_response = self.extract_with_llm(prompt)
 
         # 3. 解析结果
@@ -555,70 +779,10 @@ class KTBuilder:
         if not parsed_response:
             logger.warning(f"Failed to parse LLM response for chunk {chunk_id}")
             return
-
-        # 4. 参照示例：处理 Schema 演变
-        new_schema_types = parsed_response.get("new_schema_types", {})
-        if new_schema_types:
-            self._update_schema_with_new_types(new_schema_types)
-
-        entity_types = parsed_response.get("entity_types", {})
-        attributes = parsed_response.get("attributes", {})
-        triples = parsed_response.get("triples", [])
-
-        # 6. 使用专门的 agent 方法进行图构建
-        with self.lock:
-            # 5. 处理属性 (Level 1)
-            for entity, attrs in attributes.items():
-                # 在创建实体时传入从 entity_types 中获取的具体类型
-                entity_type = entity_types.get(entity)
-                entity_id = self._find_or_create_entity_direct(entity, chunk_id, entity_type)
-
-                if isinstance(attrs, list):
-                    for attr in attrs:
-                        # 强制转为字符串，避免 unhashable dict 错误，确保可视化不报错
-                        safe_attr = str(attr) if isinstance(attr, dict) else attr
-                        attr_id = f"attr_{self.node_counter}"
-                        self.graph.add_node(attr_id,
-                                            label="attribute",
-                                            properties={"name": safe_attr, "chunk_id": chunk_id},
-                                            level=1)
-                        self._add_edge_with_metadata(
-                            entity_id,
-                            attr_id,
-                            "has_attribute",
-                            relation_origin="doc_local",
-                            confidence=0.7,
-                            evidence_chunk_ids=[str(chunk_id)],
-                            source_paper_ids=[str(chunk_id)],
-                        )
-                        self.node_counter += 1
-
-            # 6. 处理三元组 (Level 2)
-            for triple in triples:
-                if len(triple) < 3:
-                    continue
-
-                src, rel, tgt = triple[0], triple[1], triple[2]
-
-                # 从映射表中获取具体的类型
-                src_type = entity_types.get(src)
-                tgt_type = entity_types.get(tgt)
-
-                # 传入具体的类型以确保 properties.schema_type 被正确填充
-                src_id = self._find_or_create_entity_direct(src, chunk_id, src_type)
-                tgt_id = self._find_or_create_entity_direct(tgt, chunk_id, tgt_type)
-                self._add_edge_with_metadata(
-                    src_id,
-                    tgt_id,
-                    rel,
-                    relation_origin="doc_local",
-                    confidence=0.75,
-                    evidence_chunk_ids=[str(chunk_id)],
-                    source_paper_ids=[str(chunk_id)],
-                )
+        self._apply_parsed_response(parsed_response, str(chunk_id))
         #
         # with self.lock:
-        #     # 防御性处理：确保属性值不是 dict (防止可视化报错)
+        #     # 防御性处理：确保属性值不是 dict，避免可视化报错
         #     for entity, attrs in attributes.items():
         #         entity_type = entity_types.get(entity)
         #         entity_id = self._find_or_create_entity_direct(entity, chunk_id, entity_type)
@@ -632,7 +796,7 @@ class KTBuilder:
         #                                     level=1)
         #                 self.graph.add_edge(entity_id, attr_id, relation="has_attribute")
         #                 self.node_counter += 1
-        #     # 处理三元组 (Level 2)
+        #     # 处理三元组（Level 2）
         #     for triple in triples:
         #         if len(triple) < 3: continue
         #         src, rel, tgt = triple[0], triple[1], triple[2]
@@ -730,7 +894,7 @@ class KTBuilder:
         if isinstance(raw_keywords, list):
             return [str(x).strip() for x in raw_keywords if str(x).strip()]
         text = str(raw_keywords or "")
-        parts = re.split(r"[;,，；|/\\\\]+", text)
+        parts = re.split(r"[;,锛岋紱|/\\\\]+", text)
         return [x.strip() for x in parts if x.strip()]
 
     def _build_document_fact_units(self, documents: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -848,10 +1012,11 @@ class KTBuilder:
             )
         except Exception:
             return (
-                "只返回 JSON，主键为 cross_doc_triples。"
-                "每项字段：head, relation, tail, source_paper_ids, evidence_chunk_ids, confidence, reason。\n"
-                f"允许关系：{', '.join(bridge_relations)}\n"
-                f"批次事实：\n{payload}"
+                "Only return JSON with the top-level key cross_doc_triples.\n"
+                "Each item must include head, relation, tail, source_paper_ids, "
+                "evidence_chunk_ids, confidence, and reason.\n"
+                f"Allowed relations: {', '.join(bridge_relations)}\n"
+                f"Batch facts:\n{payload}"
             )
 
     def _load_bridge_cache(self, cache_key: str) -> Optional[Dict[str, Any]]:
@@ -1092,66 +1257,197 @@ class KTBuilder:
                             confidence=0.6,
                         )
 
-    # 修复 process_document 中的 ID 匹配崩溃
+    def _extract_chunk_with_parse_retry(self, chunk: Dict[str, Any], chunk_id: str) -> Dict[str, Any]:
+        prompt = self._get_construction_prompt(chunk)
+        last_raw_response = ""
+
+        for attempt in range(1, self.retry_attempts + 1):
+            raw_response = self.extract_with_llm(prompt)
+            last_raw_response = str(raw_response)
+            parsed_response = self._validate_and_parse_llm_response(raw_response)
+            if parsed_response:
+                return {
+                    "status": "success",
+                    "attempt_count": attempt,
+                    "parsed_response": parsed_response,
+                    "error": None,
+                }
+
+            if attempt < self.retry_attempts:
+                self.cross_doc_stats["parse_retries"] += 1
+                backoff = self._backoff_seconds(attempt)
+                logger.warning(
+                    f"Parse failed for chunk {chunk_id} on attempt {attempt}/{self.retry_attempts}. "
+                    f"Retrying in {backoff:.1f}s"
+                )
+                time.sleep(backoff)
+
+        return {
+            "status": "failed",
+            "attempt_count": self.retry_attempts,
+            "parsed_response": None,
+            "error": f"Failed to parse LLM response after {self.retry_attempts} attempts",
+            "raw_response": last_raw_response[:1000],
+        }
+
+    def process_document_extraction(self, doc: Dict[str, Any]) -> Dict[str, Any]:
+        if not doc:
+            return {"doc_id": "unknown", "status": "failed", "error": "Empty document"}
+
+        chunks, _ = self.chunk_text(doc)
+        doc_id = str(doc.get("id", chunks[0].get("id", "unknown") if chunks else "unknown"))
+        cached_payload = self._load_doc_extraction_cache(doc_id) if self.resume_enabled else None
+
+        if self.resume_enabled and self.replay_cached_extractions and self._all_cached_chunks_successful(cached_payload):
+            self.cross_doc_stats["documents_loaded_from_cache"] += 1
+            return {"doc_id": doc_id, "status": "cached"}
+
+        payload = cached_payload if isinstance(cached_payload, dict) else self._build_doc_cache_payload(doc, chunks)
+        chunk_map = {str(item.get("chunk_id", "")): item for item in payload.get("chunks", [])}
+
+        payload["status"] = "processing"
+        payload["timestamp"] = time.time()
+        self._save_doc_extraction_cache(doc_id, payload)
+
+        doc_failed = False
+        for chunk in chunks:
+            chunk_id = str(chunk.get("id", ""))
+            chunk_entry = chunk_map.get(chunk_id)
+            if chunk_entry is None:
+                chunk_entry = {
+                    "chunk_id": chunk_id,
+                    "chunk_text": chunk.get("text", ""),
+                    "status": "pending",
+                    "attempt_count": 0,
+                    "parsed_response": None,
+                    "error": None,
+                }
+                payload.setdefault("chunks", []).append(chunk_entry)
+                chunk_map[chunk_id] = chunk_entry
+
+            if (
+                self.resume_enabled
+                and self.replay_cached_extractions
+                and chunk_entry.get("status") == "success"
+                and chunk_entry.get("parsed_response")
+            ):
+                continue
+
+            try:
+                result = self._extract_chunk_with_parse_retry(chunk, chunk_id)
+                chunk_entry.update(result)
+                if result["status"] != "success":
+                    doc_failed = True
+            except Exception as e:
+                chunk_entry.update(
+                    {
+                        "status": "failed",
+                        "attempt_count": self.retry_attempts,
+                        "parsed_response": None,
+                        "error": f"{type(e).__name__}: {e}",
+                    }
+                )
+                doc_failed = True
+
+            payload["timestamp"] = time.time()
+            payload["status"] = "failed" if doc_failed else "processing"
+            self._save_doc_extraction_cache(doc_id, payload)
+
+        payload["status"] = "failed" if doc_failed else "success"
+        payload["timestamp"] = time.time()
+        self._save_doc_extraction_cache(doc_id, payload)
+
+        if doc_failed:
+            self.cross_doc_stats["documents_failed"] += 1
+            return {"doc_id": doc_id, "status": "failed"}
+
+        self.cross_doc_stats["documents_extracted"] += 1
+        return {"doc_id": doc_id, "status": "success"}
+
     def process_document(self, doc: Dict[str, Any]) -> None:
-        try:
-            if not doc: return
+        if not doc:
+            return
+        chunks, _ = self.chunk_text(doc)
+        doc_id = str(doc.get("id", chunks[0].get("id", "unknown") if chunks else "unknown"))
+        payload = self._load_doc_extraction_cache(doc_id)
+        if not isinstance(payload, dict):
+            logger.warning(f"No extraction cache found for document {doc_id}, skipping graph replay")
+            return
 
-            # 使用修改后的 chunk_text
-            chunks, _ = self.chunk_text(doc)
+        applied_any = False
+        for chunk_entry in payload.get("chunks", []):
+            if chunk_entry.get("status") != "success" or not chunk_entry.get("parsed_response"):
+                continue
+            self._apply_parsed_response(chunk_entry.get("parsed_response", {}), str(chunk_entry.get("chunk_id", doc_id)))
+            applied_any = True
 
-            for chunk in chunks:
-                chunk_id = chunk.get("id")
-                # 无论是否 agent 模式，核心逻辑是一样的，这里简化调用统一逻辑
-                self.process_level1_level2_agent(chunk, chunk_id)
-
-        except Exception as e:
-            logger.error(f"Error processing document: {e}", exc_info=True)
+        if applied_any:
+            self.cross_doc_stats["documents_applied"] += 1
+        else:
+            self.cross_doc_stats["documents_apply_failed"] += 1
 
     def process_all_documents(self, documents: List[Dict[str, Any]]) -> None:
-        """Process all documents with high concurrency and pass results to process_level4."""
+        """Extract documents to cache first, then replay cached extractions into the graph."""
 
         max_workers = min(self.config.construction.max_workers, (os.cpu_count() or 1) + 4)
         start_construct = time.time()
         total_docs = len(documents)
+        self.cross_doc_stats["documents_total"] = total_docs
 
-        logger.info(f"Starting processing {total_docs} documents with {max_workers} workers...")
+        logger.info(
+            f"Starting extraction for {total_docs} documents with {max_workers} workers "
+            f"(max concurrent LLM requests: {self.max_concurrent_llm_requests})..."
+        )
 
-        all_futures = []
-        processed_count = 0
+        completed_count = 0
         failed_count = 0
 
-        try:
-            with futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-                # Submit all documents for processing and store futures
-                all_futures = [executor.submit(self.process_document, doc) for doc in documents]
+        with futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            all_futures = [executor.submit(self.process_document_extraction, doc) for doc in documents]
 
-                for i, future in enumerate(futures.as_completed(all_futures)):
-                    try:
-                        future.result()
-                        processed_count += 1
-
-                        if processed_count % 10 == 0 or processed_count == total_docs:
-                            elapsed_time = time.time() - start_construct
-                            avg_time_per_doc = elapsed_time / processed_count if processed_count > 0 else 0
-                            remaining_docs = total_docs - processed_count
-                            estimated_remaining_time = remaining_docs * avg_time_per_doc
-
-                            logger.info(f"Progress: {processed_count}/{total_docs} documents processed "
-                                        f"({processed_count / total_docs * 100:.1f}%) "
-                                        f"[{failed_count} failed] "
-                                        f"ETA: {estimated_remaining_time / 60:.1f} minutes")
-
-                    except Exception as e:
+            for future in futures.as_completed(all_futures):
+                try:
+                    result = future.result()
+                    completed_count += 1
+                    if result.get("status") == "failed":
                         failed_count += 1
 
-        except Exception as e:
-            return
+                    if completed_count % 10 == 0 or completed_count == total_docs:
+                        elapsed_time = time.time() - start_construct
+                        avg_time_per_doc = elapsed_time / completed_count if completed_count > 0 else 0
+                        remaining_docs = total_docs - completed_count
+                        estimated_remaining_time = remaining_docs * avg_time_per_doc
+                        logger.info(
+                            f"Extraction progress: {completed_count}/{total_docs} "
+                            f"({completed_count / total_docs * 100:.1f}%) "
+                            f"[{failed_count} failed, {self.cross_doc_stats['documents_loaded_from_cache']} cache hits] "
+                            f"ETA: {estimated_remaining_time / 60:.1f} minutes"
+                        )
+                except Exception as e:
+                    completed_count += 1
+                    failed_count += 1
+                    self.cross_doc_stats["documents_failed"] += 1
+                    logger.error(f"Document extraction future failed: {type(e).__name__}: {e}", exc_info=True)
+
+        logger.info("Replaying cached extractions into graph...")
+        for doc in documents:
+            try:
+                self.process_document(doc)
+            except Exception as e:
+                self.cross_doc_stats["documents_apply_failed"] += 1
+                logger.error(f"Error replaying document into graph: {type(e).__name__}: {e}", exc_info=True)
 
         end_construct = time.time()
         logger.info(f"Construction Time: {end_construct - start_construct}s")
-        logger.info(f"Successfully processed: {processed_count}/{total_docs} documents")
-        logger.info(f"Failed: {failed_count} documents")
+        logger.info(
+            f"Extraction summary: success={self.cross_doc_stats['documents_extracted']} "
+            f"cache_hits={self.cross_doc_stats['documents_loaded_from_cache']} "
+            f"failed={self.cross_doc_stats['documents_failed']}"
+        )
+        logger.info(
+            f"Replay summary: applied={self.cross_doc_stats['documents_applied']} "
+            f"apply_failed={self.cross_doc_stats['documents_apply_failed']}"
+        )
 
         if getattr(self.config.construction, "cross_doc_enabled", True):
             logger.info("Starting cross-document bridge stage...")
@@ -1238,3 +1534,5 @@ class KTBuilder:
             logger.warning(f"Failed to save construction stats: {type(e).__name__}: {e}")
 
         return output
+
+

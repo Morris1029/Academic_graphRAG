@@ -31,7 +31,17 @@ class TriggersConfig:
 class ConstructionConfig:
     """Construction configuration"""
     mode: str = "agent"
-    max_workers: int = 32
+    max_workers: int = 16
+    max_concurrent_llm_requests: int = 4
+    requests_per_minute: int = 120
+    tokens_per_minute_budget: int = 0
+    llm_timeout_seconds: int = 90
+    retry_attempts: int = 3
+    retry_backoff_base_seconds: float = 2.0
+    retry_backoff_max_seconds: float = 20.0
+    resume_enabled: bool = True
+    replay_cached_extractions: bool = True
+    extraction_cache_dir: str = "output/construction_cache"
     datasets_no_chunk: list = None
     chunk_size: int = 1000
     overlap: int = 200
@@ -48,7 +58,7 @@ class ConstructionConfig:
         if self.datasets_no_chunk is None:
             self.datasets_no_chunk = ["hotpot"]
         if self.bridge_relations is None:
-            self.bridge_relations = ["??", "??", "??"]
+            self.bridge_relations = ["扩展", "对比", "复用"]
 
 @dataclass
 class TreeCommConfig:
@@ -125,7 +135,7 @@ class OutputConfig:
 class PerformanceConfig:
     """Performance configuration"""
     parallel_processing: bool = True
-    max_workers: int = 32
+    max_workers: int = 16
     batch_size: int = 16
     memory_optimization: bool = True
 

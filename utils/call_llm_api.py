@@ -10,7 +10,7 @@ load_dotenv()
 
 
 class LLMCompletionCall:
-    def __init__(self, scope: str = "default"):
+    def __init__(self, scope: str = "default", timeout_seconds: float | None = None):
         """
         Initialize an LLM client for a specific workflow scope.
 
@@ -21,6 +21,7 @@ class LLMCompletionCall:
         """
         self.scope = (scope or "default").lower()
         self.llm_model_name, self.llm_base_url, self.llm_api_key = self._resolve_config(self.scope)
+        self.timeout_seconds = timeout_seconds
 
         if not self.llm_api_key:
             raise ValueError(f"{self.scope.upper()} LLM API key not provided")
@@ -56,6 +57,7 @@ class LLMCompletionCall:
                 base_url=self.llm_base_url,
                 api_key=self.llm_api_key,
                 temperature=0.3,
+                timeout=self.timeout_seconds,
             )
 
         if self.openai_provider == "azure":
@@ -66,6 +68,7 @@ class LLMCompletionCall:
                 api_version=api_version,
                 deployment_name=self.llm_model_name,
                 temperature=0.3,
+                timeout=self.timeout_seconds,
             )
 
         return ChatOpenAI(
@@ -73,13 +76,19 @@ class LLMCompletionCall:
             base_url=self.llm_base_url,
             api_key=self.llm_api_key,
             temperature=0.3,
+            timeout=self.timeout_seconds,
         )
 
-    def call_api(self, content: str) -> str:
+    def call_api(self, content: str, timeout_seconds: float | None = None) -> str:
         """
         Keep the original project-facing API stable.
         """
         try:
+            if timeout_seconds is not None and timeout_seconds != self.timeout_seconds:
+                logger.debug(
+                    "call_api received timeout_seconds override, but client timeout is fixed at initialization: "
+                    f"{self.timeout_seconds}"
+                )
             response = self._lc_model.invoke(content)
             raw_content = response.content
             if not isinstance(raw_content, str):

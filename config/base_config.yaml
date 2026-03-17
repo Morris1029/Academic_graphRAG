@@ -7,14 +7,24 @@ construction:
   batch_size_docs: 24
   token_budget_per_batch: 12000
   bridge_relations:
-  #拓展、对比、复用
+  # 扩展、对比、复用
   - "\u6269\u5c55"
   - "\u5bf9\u6bd4"
   - "\u590d\u7528"
   prompt_version: v1
   datasets_no_chunk:
   - demo
-  max_workers: 32
+  max_workers: 16
+  max_concurrent_llm_requests: 4
+  requests_per_minute: 120
+  tokens_per_minute_budget: 0
+  llm_timeout_seconds: 90
+  retry_attempts: 3
+  retry_backoff_base_seconds: 2
+  retry_backoff_max_seconds: 20
+  resume_enabled: true
+  replay_cached_extractions: true
+  extraction_cache_dir: output/construction_cache
   mode: agent  # set noagent to speed up
   overlap: 200
   tree_comm:
