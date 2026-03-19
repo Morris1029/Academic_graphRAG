@@ -1,0 +1,4 @@
+magic-pdf==1.3.12
+doclayout-yolo
+rapid_table
+textract

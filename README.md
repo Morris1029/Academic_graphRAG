@@ -263,3 +263,19 @@ We welcome contributions from the community! Here's how you can help:
       url={https://arxiv.org/abs/2508.19855}, 
 }
 ```
+
+## Linux Server Deployment
+
+Use the following files for a clean server setup:
+
+- [`requirements-server.txt`](requirements-server.txt)
+- [`requirements-optional.txt`](requirements-optional.txt)
+- [`DEPLOY.md`](DEPLOY.md)
+- [`server-setup.sh`](server-setup.sh)
+
+Quick start:
+
+```bash
+chmod +x server-setup.sh
+./server-setup.sh
+```
