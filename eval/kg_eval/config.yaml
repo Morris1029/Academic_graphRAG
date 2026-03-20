@@ -1,0 +1,30 @@
+env_path: "eval/.env"
+
+defaults:
+  dataset_name: "AIGC-EDU"
+  sample_path: "eval/kg_eval/AIGC-EDU-test.json"
+  main_config_path: "config/base_config.yaml"
+  results_dir: "eval/results/kg_eval"
+  cross_doc_review_sample_size: 50
+  cross_doc_review_seed: 42
+  paper_node_top_k: 5
+  gold_triple_top_k: 10
+  gold_profile: "deepseek_kg_gold"
+  candidate_profile: "qwen_kg_candidate"
+
+profiles:
+  extraction_profiles:
+    deepseek_kg_gold:
+      provider: "openai"
+      model_env: "KG_GOLD_DEEPSEEK_MODEL"
+      base_url_env: "KG_GOLD_DEEPSEEK_BASE_URL"
+      api_key_env: "KG_GOLD_DEEPSEEK_API_KEY"
+      temperature: 0.0
+      timeout_seconds: 120
+    qwen_kg_candidate:
+      provider: "openai"
+      model_env: "KG_CANDIDATE_QWEN_MODEL"
+      base_url_env: "KG_CANDIDATE_QWEN_BASE_URL"
+      api_key_env: "KG_CANDIDATE_QWEN_API_KEY"
+      temperature: 0.0
+      timeout_seconds: 120
