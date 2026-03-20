@@ -13,7 +13,7 @@ from .judge import LLMJudge
 from .llm_client import load_eval_env, resolve_profile, temporary_rag_env
 from .models import JudgmentResult, QAPrediction
 from .qa_runner import DatasetValidationError, OfflineGraphRAGRunner
-from .reporter import save_run_outputs
+from .reporter import append_sample_outputs, init_run_outputs, write_summary_outputs
 
 
 def parse_args():
@@ -107,8 +107,31 @@ def main():
             max_attempts=int(retry_policy.get("judge_max_attempts", 2)),
         )
 
+        run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_dir = os.path.join(
+            defaults.get("results_dir", "eval/results"),
+            f"{run_id}_{dataset_name}_{answer_profile_name}",
+        )
+        run_meta = {
+            "run_id": run_id,
+            "dataset_name": dataset_name,
+            "question_set_path": question_set_path,
+            "qa_mode": qa_mode,
+            "answer_profile": answer_profile_name,
+            "judge_profile": judge_profile_name,
+            "dataset_audit": runner.dataset_audit.to_dict(),
+        }
+        init_run_outputs(output_dir, dimensions)
+
         predictions: list[QAPrediction] = []
         judgments: list[JudgmentResult] = []
+        combined_rows: list[dict] = []
+        summary_payload = write_summary_outputs(
+            output_dir=output_dir,
+            run_meta=run_meta,
+            combined_rows=combined_rows,
+            dimensions=dimensions,
+        )
 
         for index, sample in enumerate(samples, start=1):
             logger.info(f"[{index}/{len(samples)}] Evaluating question_id={sample.question_id}")
@@ -124,34 +147,31 @@ def main():
                         prediction.error,
                     )
                 )
-                continue
+            else:
+                judgments.append(judge.judge(sample, prediction))
 
-            judgments.append(judge.judge(sample, prediction))
-
-    run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_dir = os.path.join(
-        defaults.get("results_dir", "eval/results"),
-        f"{run_id}_{dataset_name}_{answer_profile_name}",
-    )
-    run_meta = {
-        "run_id": run_id,
-        "dataset_name": dataset_name,
-        "question_set_path": question_set_path,
-        "qa_mode": qa_mode,
-        "answer_profile": answer_profile_name,
-        "judge_profile": judge_profile_name,
-        "dataset_audit": runner.dataset_audit.to_dict(),
-    }
-
-    summary_payload = save_run_outputs(
-        output_dir=output_dir,
-        run_meta=run_meta,
-        samples=samples,
-        predictions=predictions,
-        judgments=judgments,
-        dimensions=dimensions,
-        save_raw_context=save_raw_context,
-    )
+            latest_judgment = judgments[-1]
+            combined_rows.append(
+                append_sample_outputs(
+                    output_dir=output_dir,
+                    run_meta=run_meta,
+                    sample=sample,
+                    prediction=prediction,
+                    judgment=latest_judgment,
+                    dimensions=dimensions,
+                    save_raw_context=save_raw_context,
+                )
+            )
+            summary_payload = write_summary_outputs(
+                output_dir=output_dir,
+                run_meta=run_meta,
+                combined_rows=combined_rows,
+                dimensions=dimensions,
+            )
+            logger.info(
+                f"Checkpoint saved after question_id={sample.question_id} "
+                f"({len(combined_rows)}/{len(samples)})"
+            )
 
     logger.info(f"Evaluation completed. Results saved to: {output_dir}")
     logger.info(f"Summary: {summary_payload['summary']}")

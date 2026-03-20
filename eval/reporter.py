@@ -4,7 +4,7 @@ import csv
 import json
 from collections import defaultdict
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Tuple
 
 from .models import EvaluationSample, JudgmentResult, QAPrediction
 
@@ -13,6 +13,11 @@ def _write_jsonl(path: Path, rows: List[Dict]) -> None:
     with path.open("w", encoding="utf-8") as handle:
         for row in rows:
             handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+
+def _append_jsonl(path: Path, row: Dict) -> None:
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
 def _refusal_detected(answer: str) -> bool:
@@ -131,69 +136,123 @@ def render_report_markdown(run_meta: Dict, summary: Dict, rows: List[Dict], dime
     return "\n".join(lines) + "\n"
 
 
-def save_run_outputs(
+def _build_output_rows(
+    sample: EvaluationSample,
+    prediction: QAPrediction,
+    judgment: JudgmentResult,
+    run_meta: Dict,
+    dimensions: Dict[str, Dict],
+    save_raw_context: bool,
+) -> Tuple[Dict, Dict, Dict]:
+    prediction_row = {
+        **sample.to_dict(),
+        **prediction.to_dict(),
+        "answer_profile": run_meta["answer_profile"],
+        "qa_mode": run_meta["qa_mode"],
+    }
+    if not save_raw_context:
+        prediction_row["retrieved_triples"] = []
+        prediction_row["retrieved_chunks"] = []
+        prediction_row["reasoning_steps"] = []
+
+    judgment_row = {
+        **sample.to_dict(),
+        **judgment.to_dict(),
+        "judge_profile": run_meta["judge_profile"],
+    }
+
+    combined_row = {
+        "question_id": sample.question_id,
+        "question_type": sample.question_type,
+        "question": sample.question,
+        "reference_answer": sample.reference_answer,
+        "eval_focus": sample.eval_focus,
+        "predicted_answer": prediction.answer,
+        "latency_seconds": prediction.latency_seconds,
+        "qa_error": prediction.error,
+        "judge_error": judgment.error,
+        "weighted_score": judgment.weighted_score,
+        "verdict": judgment.verdict,
+        "judge_confidence": judgment.judge_confidence,
+        "hallucination_flags": "; ".join(judgment.hallucination_flags),
+        "strengths": " | ".join(judgment.strengths),
+        "weaknesses": " | ".join(judgment.weaknesses),
+        "missing_points": " | ".join(judgment.missing_points),
+    }
+    for dimension_name in dimensions:
+        combined_row[dimension_name] = judgment.scores.get(dimension_name, 0.0)
+
+    return prediction_row, judgment_row, combined_row
+
+
+def init_run_outputs(output_dir: str, dimensions: Dict[str, Dict]) -> None:
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    csv_path = output_path / "results.csv"
+    if not csv_path.exists():
+        fieldnames = [
+            "question_id",
+            "question_type",
+            "question",
+            "reference_answer",
+            "eval_focus",
+            "predicted_answer",
+            "latency_seconds",
+            "qa_error",
+            "judge_error",
+            "weighted_score",
+            "verdict",
+            "judge_confidence",
+            "hallucination_flags",
+            "strengths",
+            "weaknesses",
+            "missing_points",
+            *dimensions.keys(),
+        ]
+        with csv_path.open("w", encoding="utf-8-sig", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=fieldnames)
+            writer.writeheader()
+
+
+def append_sample_outputs(
     output_dir: str,
     run_meta: Dict,
-    samples: List[EvaluationSample],
-    predictions: List[QAPrediction],
-    judgments: List[JudgmentResult],
+    sample: EvaluationSample,
+    prediction: QAPrediction,
+    judgment: JudgmentResult,
     dimensions: Dict[str, Dict],
     save_raw_context: bool = True,
 ) -> Dict:
     output_path = Path(output_dir)
-    output_path.mkdir(parents=True, exist_ok=True)
+    prediction_row, judgment_row, combined_row = _build_output_rows(
+        sample=sample,
+        prediction=prediction,
+        judgment=judgment,
+        run_meta=run_meta,
+        dimensions=dimensions,
+        save_raw_context=save_raw_context,
+    )
 
-    prediction_rows = []
-    judgment_rows = []
-    combined_rows = []
+    _append_jsonl(output_path / "predictions.jsonl", prediction_row)
+    _append_jsonl(output_path / "judgments.jsonl", judgment_row)
 
-    for sample, prediction, judgment in zip(samples, predictions, judgments):
-        prediction_row = {
-            **sample.to_dict(),
-            **prediction.to_dict(),
-            "answer_profile": run_meta["answer_profile"],
-            "qa_mode": run_meta["qa_mode"],
-        }
-        if not save_raw_context:
-            prediction_row["retrieved_triples"] = []
-            prediction_row["retrieved_chunks"] = []
-            prediction_row["reasoning_steps"] = []
+    with (output_path / "results.csv").open("a", encoding="utf-8-sig", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(combined_row.keys()))
+        writer.writerow(combined_row)
 
-        judgment_row = {
-            **sample.to_dict(),
-            **judgment.to_dict(),
-            "judge_profile": run_meta["judge_profile"],
-        }
-        combined_row = {
-            "question_id": sample.question_id,
-            "question_type": sample.question_type,
-            "question": sample.question,
-            "reference_answer": sample.reference_answer,
-            "eval_focus": sample.eval_focus,
-            "predicted_answer": prediction.answer,
-            "latency_seconds": prediction.latency_seconds,
-            "qa_error": prediction.error,
-            "judge_error": judgment.error,
-            "weighted_score": judgment.weighted_score,
-            "verdict": judgment.verdict,
-            "judge_confidence": judgment.judge_confidence,
-            "hallucination_flags": "; ".join(judgment.hallucination_flags),
-            "strengths": " | ".join(judgment.strengths),
-            "weaknesses": " | ".join(judgment.weaknesses),
-            "missing_points": " | ".join(judgment.missing_points),
-        }
-        for dimension_name in dimensions:
-            combined_row[dimension_name] = judgment.scores.get(dimension_name, 0.0)
+    return combined_row
 
-        prediction_rows.append(prediction_row)
-        judgment_rows.append(judgment_row)
-        combined_rows.append(combined_row)
 
+def write_summary_outputs(
+    output_dir: str,
+    run_meta: Dict,
+    combined_rows: List[Dict],
+    dimensions: Dict[str, Dict],
+) -> Dict:
+    output_path = Path(output_dir)
     summary = build_summary(combined_rows, dimensions)
     report_markdown = render_report_markdown(run_meta, summary, combined_rows, dimensions)
-
-    _write_jsonl(output_path / "predictions.jsonl", prediction_rows)
-    _write_jsonl(output_path / "judgments.jsonl", judgment_rows)
 
     summary_payload = {
         "run_meta": run_meta,
@@ -204,18 +263,52 @@ def save_run_outputs(
         encoding="utf-8",
     )
     (output_path / "report.md").write_text(report_markdown, encoding="utf-8")
+    return summary_payload
 
-    fieldnames = list(combined_rows[0].keys()) if combined_rows else [
-        "question_id",
-        "question_type",
-        "question",
-        "reference_answer",
-        "predicted_answer",
-        "weighted_score",
-    ]
+
+def save_run_outputs(
+    output_dir: str,
+    run_meta: Dict,
+    samples: List[EvaluationSample],
+    predictions: List[QAPrediction],
+    judgments: List[JudgmentResult],
+    dimensions: Dict[str, Dict],
+    save_raw_context: bool = True,
+) -> Dict:
+    init_run_outputs(output_dir, dimensions)
+
+    prediction_rows = []
+    judgment_rows = []
+    combined_rows = []
+
+    for sample, prediction, judgment in zip(samples, predictions, judgments):
+        prediction_row, judgment_row, combined_row = _build_output_rows(
+            sample=sample,
+            prediction=prediction,
+            judgment=judgment,
+            run_meta=run_meta,
+            dimensions=dimensions,
+            save_raw_context=save_raw_context,
+        )
+        prediction_rows.append(prediction_row)
+        judgment_rows.append(judgment_row)
+        combined_rows.append(combined_row)
+
+    output_path = Path(output_dir)
+    _write_jsonl(output_path / "predictions.jsonl", prediction_rows)
+    _write_jsonl(output_path / "judgments.jsonl", judgment_rows)
+
     with (output_path / "results.csv").open("w", encoding="utf-8-sig", newline="") as handle:
+        fieldnames = list(combined_rows[0].keys()) if combined_rows else [
+            "question_id",
+            "question_type",
+            "question",
+            "reference_answer",
+            "predicted_answer",
+            "weighted_score",
+        ]
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(combined_rows)
 
-    return summary_payload
+    return write_summary_outputs(output_dir, run_meta, combined_rows, dimensions)
