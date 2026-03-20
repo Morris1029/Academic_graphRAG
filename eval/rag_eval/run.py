@@ -18,7 +18,7 @@ from .reporter import append_sample_outputs, init_run_outputs, write_summary_out
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Independent GraphRAG evaluation runner")
-    parser.add_argument("--config", default="eval/config.yaml", help="Path to evaluation config")
+    parser.add_argument("--config", default="eval/rag_eval/config.yaml", help="Path to evaluation config")
     parser.add_argument("--dataset", help="Dataset name override")
     parser.add_argument("--answer-profile", help="Answer model profile override")
     parser.add_argument("--judge-profile", help="Judge model profile override")

@@ -1,15 +1,15 @@
-env_path: "eval/.env"
+env_path: "eval/rag_eval/.env"
 
 defaults:
-  question_set_path: "eval/dataset/sheet1_questions.json"
+  question_set_path: "eval/rag_eval/dataset/sheet1_questions.json"
   dataset_conversion_input: "D:/STUDY MO/Research/Data/Q&A.xlsx"
   dataset_name: "AIGC-EDU-test"
   qa_mode: "agent"
   answer_profile: "deepseek_rag"
   judge_profile: "qwen_judge"
   main_config_path: "config/base_config.yaml"
-  results_dir: "eval/results"
-  prompt_path: "eval/prompts/judge_prompt.txt"
+  results_dir: "eval/rag_eval/results"
+  prompt_path: "eval/rag_eval/prompts/judge_prompt.txt"
   max_samples:
   concurrency: 1
   save_raw_context: true
