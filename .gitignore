@@ -22,6 +22,7 @@ wheels/
 
 data/
 output/
+eval/results/
 
 retriever/faiss_cache_new/*
 docker/Dockerfile

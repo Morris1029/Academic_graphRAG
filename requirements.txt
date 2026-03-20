@@ -41,3 +41,5 @@ nanoid==2.0.0
 dotenv==0.9.9 
 python-dotenv==1.1.1
 chardet==5.2.0
+pandas==2.3.1
+openpyxl==3.1.2

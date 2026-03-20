@@ -1,0 +1,64 @@
+env_path: "eval/.env"
+
+defaults:
+  question_set_path: "eval/dataset/sheet1_questions.json"
+  dataset_conversion_input: "D:/STUDY MO/Research/Data/Q&A.xlsx"
+  dataset_name: "AIGC-EDU-test"
+  qa_mode: "agent"
+  answer_profile: "deepseek_rag"
+  judge_profile: "qwen_judge"
+  main_config_path: "config/base_config.yaml"
+  results_dir: "eval/results"
+  prompt_path: "eval/prompts/judge_prompt.txt"
+  max_samples:
+  concurrency: 1
+  save_raw_context: true
+
+runtime:
+  retry_policy:
+    answer_max_attempts: 2
+    judge_max_attempts: 2
+
+profiles:
+  # Judge is fixed per run; answer profile is the compared model.
+  answer_profiles:
+    deepseek_rag:
+      provider: "openai"
+      model_env: "ANSWER_DEEPSEEK_RAG_MODEL"
+      base_url_env: "ANSWER_DEEPSEEK_RAG_BASE_URL"
+      api_key_env: "ANSWER_DEEPSEEK_RAG_API_KEY"
+      temperature: 0.3
+      timeout_seconds: 120
+    qwen_rag:
+      provider: "openai"
+      model_env: "ANSWER_QWEN_RAG_MODEL"
+      base_url_env: "ANSWER_QWEN_RAG_BASE_URL"
+      api_key_env: "ANSWER_QWEN_RAG_API_KEY"
+      temperature: 0.3
+      timeout_seconds: 120
+  judge_profiles:
+    qwen_judge:
+      provider: "openai"
+      model_env: "JUDGE_QWEN_MODEL"
+      base_url_env: "JUDGE_QWEN_BASE_URL"
+      api_key_env: "JUDGE_QWEN_API_KEY"
+      temperature: 0.0
+      timeout_seconds: 120
+
+evaluation:
+  dimensions:
+    accuracy:
+      weight: 0.2
+      description: "是否与参考答案和检索证据一致，是否存在事实性错误或明显幻觉"
+    completeness:
+      weight: 0.2
+      description: "是否覆盖问题所需关键点，是否遗漏核心要素"
+    logic:
+      weight: 0.2
+      description: "回答是否结构清晰、推理自洽、前后不矛盾"
+    explainability:
+      weight: 0.2
+      description: "是否说明依据、理由或证据，让读者能理解答案为何成立"
+    interdisciplinarity:
+      weight: 0.2
+      description: "是否体现跨学科关联、比较、迁移、融合或多视角整合"

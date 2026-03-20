@@ -26,7 +26,7 @@ class LLMCompletionCall:
         if not self.llm_api_key:
             raise ValueError(f"{self.scope.upper()} LLM API key not provided")
 
-        self.openai_provider = os.getenv("OPENAI_PROVIDER", "openai").lower()
+        self.openai_provider = self._resolve_provider(self.scope)
         self._lc_model = self._build_model()
 
     def _resolve_config(self, scope: str):
@@ -50,18 +50,20 @@ class LLMCompletionCall:
             os.getenv("LLM_API_KEY", ""),
         )
 
-    def _build_model(self):
-        if self.scope in {"kg", "rag"}:
-            return ChatOpenAI(
-                model=self.llm_model_name,
-                base_url=self.llm_base_url,
-                api_key=self.llm_api_key,
-                temperature=0.3,
-                timeout=self.timeout_seconds,
-            )
+    def _resolve_provider(self, scope: str) -> str:
+        scope_prefix = scope.upper()
+        return (
+            os.getenv(f"{scope_prefix}_OPENAI_PROVIDER")
+            or os.getenv("OPENAI_PROVIDER", "openai")
+        ).lower()
 
+    def _build_model(self):
         if self.openai_provider == "azure":
-            api_version = os.getenv("API_VERSION", "2025-01-01-preview")
+            scope_prefix = self.scope.upper()
+            api_version = os.getenv(
+                f"{scope_prefix}_API_VERSION",
+                os.getenv("API_VERSION", "2025-01-01-preview"),
+            )
             return AzureChatOpenAI(
                 azure_endpoint=self.llm_base_url,
                 api_key=self.llm_api_key,
