@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 import json
-import re
-import unicodedata
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
+from typing import Any, Dict, Iterable, Optional, Set, Tuple
 
 from config import DatasetConfig, reload_config
 from models.constructor.kt_gen import KTBuilder
+from utils.entity_normalizer import EntityNormalizer, normalize_text
 
 from .data_models import KGExtraction
 
@@ -55,7 +54,7 @@ def sanitize_extraction_payload(payload: Any) -> KGExtraction:
 
 
 class ConstructionBridge:
-    """Reuse the production construction prompt and normalization rules without requiring a KG API key."""
+    """Reuse production normalization and prompts without requiring live KG construction."""
 
     def __init__(self, dataset_name: str, main_config_path: str):
         self.dataset_name = dataset_name
@@ -64,6 +63,7 @@ class ConstructionBridge:
         self.schema_path = self.dataset_config.schema_path
         self.schema = json.loads(Path(self.schema_path).read_text(encoding="utf-8"))
         self.builder = self._build_prompt_bridge()
+        self.entity_normalizer = self.builder.entity_normalizer
 
     def _build_prompt_bridge(self) -> KTBuilder:
         builder = KTBuilder.__new__(KTBuilder)
@@ -101,6 +101,10 @@ class ConstructionBridge:
             for node_type in self.schema.get("Nodes", [])
             if str(node_type).strip()
         }
+        builder.entity_normalizer = EntityNormalizer(
+            schema_type_aliases=builder.schema_type_aliases,
+            config_path=getattr(self.config.construction, "entity_aliases_path", "config/entity_aliases.yaml"),
+        )
         return builder
 
     def build_prompt(self, sample: Dict[str, Any]) -> str:
@@ -112,28 +116,21 @@ class ConstructionBridge:
         return sanitize_extraction_payload(parsed)
 
     def normalize_text(self, value: Any) -> str:
-        text = unicodedata.normalize("NFKC", str(value or ""))
-        text = text.replace("\u3000", " ")
-        text = re.sub(r"\s+", " ", text).strip()
-        text = text.strip("\"'“”‘’`")
-        text = text.strip("()[]{}<>《》")
-        return text.casefold()
+        return normalize_text(value).casefold()
 
-    def normalize_entity_name(self, value: Any) -> str:
-        return self.normalize_text(value)
+    def normalize_entity_name(self, value: Any, entity_type: Any = "") -> str:
+        if entity_type:
+            _, normalized_key = self.entity_normalizer.resolve(value, entity_type)
+            return normalized_key
+        return self.entity_normalizer.normalize_name_key(value)
 
     def normalize_relation_name(self, value: Any) -> str:
-        relation = unicodedata.normalize("NFKC", str(value or "")).strip()
+        relation = normalize_text(value, strip_outer_brackets=False)
         relation = self.builder._normalize_relation_name(relation)
-        return re.sub(r"\s+", " ", relation).strip()
+        return " ".join(str(relation).split()).strip()
 
     def normalize_entity_type(self, value: Any) -> str:
-        raw = unicodedata.normalize("NFKC", str(value or "")).strip()
-        if not raw:
-            return ""
-        lowered = raw.casefold()
-        alias_hit = self.builder.schema_type_aliases.get(lowered, self.builder.schema_type_aliases.get(raw))
-        normalized = alias_hit or raw
+        normalized = self.entity_normalizer.normalize_entity_type(value)
         if normalized in self.builder.allowed_schema_node_types:
             return normalized
         return normalized
@@ -147,23 +144,30 @@ class ConstructionBridge:
     def normalize_extraction(self, extraction: Any) -> Dict[str, Any]:
         clean_extraction = sanitize_extraction_payload(extraction).to_dict()
         entity_type_map: Dict[str, str] = {}
+        raw_entity_types: Dict[str, str] = {}
 
         for entity_name, entity_type in clean_extraction["entity_types"].items():
-            normalized_name = self.normalize_entity_name(entity_name)
+            normalized_type = self.normalize_entity_type(entity_type)
+            raw_entity_types[str(entity_name or "").strip()] = normalized_type
+            normalized_name = self.normalize_entity_name(entity_name, normalized_type)
             if not normalized_name:
                 continue
-            entity_type_map[normalized_name] = self.normalize_entity_type(entity_type)
+            entity_type_map[normalized_name] = normalized_type
 
         for entity_name in clean_extraction["attributes"].keys():
-            normalized_name = self.normalize_entity_name(entity_name)
+            raw_name = str(entity_name or "").strip()
+            normalized_type = raw_entity_types.get(raw_name, "")
+            normalized_name = self.normalize_entity_name(entity_name, normalized_type)
             if normalized_name and normalized_name not in entity_type_map:
-                entity_type_map[normalized_name] = ""
+                entity_type_map[normalized_name] = normalized_type
 
         for head, _, tail in clean_extraction["triples"]:
             for entity_name in (head, tail):
-                normalized_name = self.normalize_entity_name(entity_name)
+                raw_name = str(entity_name or "").strip()
+                normalized_type = raw_entity_types.get(raw_name, "")
+                normalized_name = self.normalize_entity_name(entity_name, normalized_type)
                 if normalized_name and normalized_name not in entity_type_map:
-                    entity_type_map[normalized_name] = ""
+                    entity_type_map[normalized_name] = normalized_type
 
         entity_set = {
             (name, entity_type_map.get(name, ""))
@@ -173,15 +177,18 @@ class ConstructionBridge:
 
         triple_set = set()
         for head, relation, tail in clean_extraction["triples"]:
-            normalized_head = self.normalize_entity_name(head)
+            normalized_head = self.normalize_entity_name(head, raw_entity_types.get(str(head).strip(), ""))
             normalized_relation = self.normalize_relation_name(relation)
-            normalized_tail = self.normalize_entity_name(tail)
+            normalized_tail = self.normalize_entity_name(tail, raw_entity_types.get(str(tail).strip(), ""))
             if normalized_head and normalized_relation and normalized_tail:
                 triple_set.add((normalized_head, normalized_relation, normalized_tail))
 
         attribute_pairs = set()
         for entity_name, values in clean_extraction["attributes"].items():
-            normalized_entity = self.normalize_entity_name(entity_name)
+            normalized_entity = self.normalize_entity_name(
+                entity_name,
+                raw_entity_types.get(str(entity_name).strip(), ""),
+            )
             if not normalized_entity:
                 continue
             for value in values:

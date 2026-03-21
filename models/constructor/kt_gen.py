@@ -15,6 +15,7 @@ import json_repair
 
 from config import get_config
 from utils import call_llm_api, graph_processor, tree_comm
+from utils.entity_normalizer import EntityNormalizer
 from utils.logger import logger
 
 class KTBuilder:
@@ -102,6 +103,11 @@ class KTBuilder:
             for node_type in self.schema.get("Nodes", [])
             if str(node_type).strip()
         }
+        self.entity_normalizer = EntityNormalizer(
+            schema_type_aliases=self.schema_type_aliases,
+            config_path=getattr(self.config.construction, "entity_aliases_path", "config/entity_aliases.yaml"),
+        )
+        self.entity_alias_audit: Dict[Tuple[str, str], Set[str]] = defaultdict(set)
         self.cross_doc_stats = {
             "cross_doc_enabled": bool(getattr(self.config.construction, "cross_doc_enabled", True)),
             "bridge_batches_total": 0,
@@ -468,7 +474,18 @@ class KTBuilder:
         prompt_type = "general"
         if self.mode == "agent":
             prompt_type = f"{prompt_type}_agent"
-        return self.config.get_prompt_formatted("construction", prompt_type, schema=recommend_schema, chunk=chunk_str)
+        prompt = self.config.get_prompt_formatted(
+            "construction",
+            prompt_type,
+            schema=recommend_schema,
+            chunk=chunk_str,
+        )
+        prompt += (
+            "\n\n[Entity naming normalization rule]\n"
+            "For the same technology concept, abbreviations, full names, and Chinese-English aliases "
+            "must be unified to one entity name."
+        )
+        return prompt
 
         # base_prompt_type = prompt_type_map.get(self.dataset_name, "general")
 
@@ -505,9 +522,7 @@ class KTBuilder:
 
     def _normalize_entity_name(self, name: Any) -> str:
         """Normalize entity names for stable indexing and deduplication."""
-        text = str(name or "").strip()
-        text = re.sub(r"\s+", " ", text)
-        return text.lower()
+        return self.entity_normalizer.normalize_name_key(name)
 
     def _normalize_relation_name(self, relation: Any) -> str:
         """Normalize relation names while keeping the original Chinese labels."""
@@ -544,27 +559,126 @@ class KTBuilder:
         chunk_id = props.get("chunk_id", props.get("chunk id", ""))
         return str(chunk_id).strip() if chunk_id is not None else ""
 
-    def _register_entity_index(self, entity_name: Any, node_id: str, entity_type: Any = None, chunk_id: Any = None):
-        name_key = self._normalize_entity_name(entity_name)
-        if not name_key:
+    def _resolve_canonical_entity_name(self, entity_name: Any, entity_type: Any = None) -> Tuple[str, str]:
+        return self.entity_normalizer.resolve(entity_name, entity_type)
+
+    def _record_entity_alias(self, entity_name: Any, canonical_name: str, entity_type: Any = None) -> None:
+        alias_text = str(entity_name or "").strip()
+        canonical_text = str(canonical_name or "").strip()
+        normalized_type = self._canonicalize_entity_type(entity_type, canonical_text)
+        if not alias_text or not canonical_text:
             return
-        type_key = str(entity_type or "").strip().lower()
-        self._entity_name_index[(name_key, type_key)] = node_id
-        # 同名无类型索引，便于兜底检索
-        self._entity_name_index[(name_key, "")] = node_id
+        bucket = self.entity_alias_audit[(normalized_type, canonical_text)]
+        bucket.add(canonical_text)
+        bucket.add(alias_text)
+
+    def _collect_entity_aliases(
+        self,
+        entity_name: Any,
+        canonical_name: str,
+        entity_type: Any = None,
+        chunk_id: Any = None,
+    ) -> List[str]:
+        aliases: List[str] = []
+        raw_name = str(entity_name or "").strip()
+        if raw_name and raw_name != canonical_name:
+            aliases.append(raw_name)
         if self._is_paper_schema_type(entity_type):
-            paper_anchor = self._build_paper_anchor_key(entity_name, chunk_id)
+            meta = self.doc_meta_by_chunk_id.get(str(chunk_id), {})
+            title = str(meta.get("title", "")).strip() if isinstance(meta, dict) else ""
+            if title and title != canonical_name:
+                aliases.append(title)
+        deduped: List[str] = []
+        for alias in aliases:
+            if alias and alias != canonical_name and alias not in deduped:
+                deduped.append(alias)
+        return deduped
+
+    def _apply_entity_aliases_to_properties(
+        self,
+        properties: Dict[str, Any],
+        entity_name: Any,
+        canonical_name: str,
+        entity_type: Any = None,
+        chunk_id: Any = None,
+    ) -> None:
+        alias_candidates = self._collect_entity_aliases(entity_name, canonical_name, entity_type, chunk_id)
+        if not alias_candidates:
+            self._record_entity_alias(entity_name, canonical_name, entity_type)
+            return
+        aliases = properties.setdefault("aliases", [])
+        if not isinstance(aliases, list):
+            aliases = [str(aliases)]
+            properties["aliases"] = aliases
+        for alias in alias_candidates:
+            if alias not in aliases:
+                aliases.append(alias)
+        self._record_entity_alias(entity_name, canonical_name, entity_type)
+
+    def _ensure_entity_alias_on_node(
+        self,
+        entity_node_id: str,
+        entity_name: Any,
+        canonical_name: str,
+        entity_type: Any = None,
+        chunk_id: Any = None,
+        nodes_to_add: Optional[List[Tuple[str, Dict[str, Any]]]] = None,
+    ) -> None:
+        if entity_node_id in self.graph.nodes:
+            node_props = self.graph.nodes[entity_node_id].setdefault("properties", {})
+            if isinstance(node_props, dict):
+                self._apply_entity_aliases_to_properties(
+                    node_props,
+                    entity_name,
+                    canonical_name,
+                    entity_type,
+                    chunk_id,
+                )
+            return
+
+        if nodes_to_add is not None:
+            for node_id, node_data in nodes_to_add:
+                if node_id != entity_node_id:
+                    continue
+                node_props = node_data.setdefault("properties", {})
+                if isinstance(node_props, dict):
+                    self._apply_entity_aliases_to_properties(
+                        node_props,
+                        entity_name,
+                        canonical_name,
+                        entity_type,
+                        chunk_id,
+                    )
+                return
+
+        self._record_entity_alias(entity_name, canonical_name, entity_type)
+
+    def _register_entity_index(self, entity_name: Any, node_id: str, entity_type: Any = None, chunk_id: Any = None):
+        canonical_name, canonical_key = self._resolve_canonical_entity_name(entity_name, entity_type)
+        if not canonical_key:
+            return
+        raw_key = self._normalize_entity_name(entity_name)
+        type_key = str(entity_type or "").strip().lower()
+        self._entity_name_index[(canonical_key, type_key)] = node_id
+        self._entity_name_index[(canonical_key, "")] = node_id
+        if raw_key:
+            self._entity_name_index[(raw_key, type_key)] = node_id
+            self._entity_name_index[(raw_key, "")] = node_id
+        # 同名无类型索引，便于兜底检索
+        if self._is_paper_schema_type(entity_type):
+            paper_anchor = self._build_paper_anchor_key(canonical_name, chunk_id)
             if paper_anchor:
                 self._entity_name_index[(paper_anchor, type_key)] = node_id
                 self._entity_name_index[(paper_anchor, "")] = node_id
 
     def _lookup_entity_node_id(self, entity_name: Any, entity_type: Any = None, chunk_id: Any = None) -> Optional[str]:
-        name_key = self._normalize_entity_name(entity_name)
-        if not name_key:
+        canonical_name, canonical_key = self._resolve_canonical_entity_name(entity_name, entity_type)
+        raw_key = self._normalize_entity_name(entity_name)
+        if not canonical_key and not raw_key:
             return None
         type_key = str(entity_type or "").strip().lower()
         if self._is_paper_schema_type(entity_type):
-            paper_anchor = self._build_paper_anchor_key(entity_name, chunk_id)
+            paper_anchor = self._build_paper_anchor_key(canonical_name, chunk_id)
             if paper_anchor:
                 anchored = self._entity_name_index.get((paper_anchor, type_key))
                 if anchored:
@@ -572,11 +686,17 @@ class KTBuilder:
                 anchored = self._entity_name_index.get((paper_anchor, ""))
                 if anchored:
                     return anchored
-        if type_key:
-            exact = self._entity_name_index.get((name_key, type_key))
-            if exact:
-                return exact
-        return self._entity_name_index.get((name_key, ""))
+        for key in filter(None, [canonical_key, raw_key]):
+            if type_key:
+                exact = self._entity_name_index.get((key, type_key))
+                if exact:
+                    return exact
+            fallback = self._entity_name_index.get((key, ""))
+            if fallback:
+                fallback_type = self._get_node_schema_type(fallback).strip().lower()
+                if not type_key or not fallback_type or fallback_type == type_key:
+                    return fallback
+        return None
 
     def _add_edge_with_metadata(
         self,
@@ -605,6 +725,7 @@ class KTBuilder:
                                entity_type: str = None) -> str:
         """Find existing entity or create a new one, returning the entity node ID."""
         entity_type = self._canonicalize_entity_type(entity_type, entity_name)
+        canonical_name, _ = self._resolve_canonical_entity_name(entity_name, entity_type)
         with self.lock:
             entity_node_id = self._lookup_entity_node_id(entity_name, entity_type, chunk_id)
             if not entity_node_id:
@@ -615,7 +736,7 @@ class KTBuilder:
                             n
                             for n, d in self.graph.nodes(data=True)
                             if d.get("label") == "entity"
-                            and d["properties"]["name"] == entity_name
+                            and d["properties"]["name"] == canonical_name
                             and str(d.get("properties", {}).get("doc_uid", "")).strip() == current_doc_uid
                         ),
                         None,
@@ -625,25 +746,33 @@ class KTBuilder:
                         (
                             n
                             for n, d in self.graph.nodes(data=True)
-                            if d.get("label") == "entity" and d["properties"]["name"] == entity_name
+                            if d.get("label") == "entity"
+                            and d["properties"]["name"] == canonical_name
+                            and (
+                                not entity_type
+                                or not str(d.get("properties", {}).get("schema_type", "")).strip()
+                                or str(d.get("properties", {}).get("schema_type", "")).strip() == entity_type
+                            )
                         ),
                         None,
                     )
 
             if not entity_node_id:
                 entity_node_id = f"entity_{self.node_counter}"
-                properties = {"name": entity_name, "chunk id": chunk_id}
+                properties = {"name": canonical_name, "chunk id": chunk_id}
                 if entity_type:
                     properties["schema_type"] = entity_type
                 if self._is_paper_schema_type(entity_type):
                     meta = self.doc_meta_by_chunk_id.get(str(chunk_id), {})
-                    aliases = [str(entity_name)]
-                    title = meta.get("title")
-                    if title and str(title) not in aliases:
-                        aliases.append(str(title))
-                    properties["aliases"] = aliases
                     properties["doc_uid"] = str(meta.get("doc_uid", "")).strip()
                     properties["source_doc_id"] = str(meta.get("source_doc_id", "")).strip()
+                self._apply_entity_aliases_to_properties(
+                    properties,
+                    entity_name,
+                    canonical_name,
+                    entity_type,
+                    chunk_id,
+                )
 
                 nodes_to_add.append((
                     entity_node_id,
@@ -656,6 +785,14 @@ class KTBuilder:
                 self._register_entity_index(entity_name, entity_node_id, entity_type, chunk_id)
                 self.node_counter += 1
             else:
+                self._ensure_entity_alias_on_node(
+                    entity_node_id,
+                    entity_name,
+                    canonical_name,
+                    entity_type,
+                    chunk_id,
+                    nodes_to_add=nodes_to_add,
+                )
                 self._register_entity_index(entity_name, entity_node_id, entity_type, chunk_id)
 
         return entity_node_id
@@ -827,6 +964,7 @@ class KTBuilder:
     def _find_or_create_entity_direct(self, entity_name: str, chunk_id: int, entity_type: str = None) -> str:
         """Find existing entity or create a new one directly in graph (for agent mode)."""
         entity_type = self._canonicalize_entity_type(entity_type, entity_name)
+        canonical_name, _ = self._resolve_canonical_entity_name(entity_name, entity_type)
         entity_node_id = self._lookup_entity_node_id(entity_name, entity_type, chunk_id)
         if not entity_node_id:
             if self._is_paper_schema_type(entity_type):
@@ -835,7 +973,7 @@ class KTBuilder:
                     (
                         n
                         for n, d in self.graph.nodes(data=True)
-                        if d["properties"].get("name") == entity_name
+                        if d["properties"].get("name") == canonical_name
                         and str(d.get("properties", {}).get("doc_uid", "")).strip() == current_doc_uid
                     ),
                     None,
@@ -845,7 +983,12 @@ class KTBuilder:
                     (
                         n
                         for n, d in self.graph.nodes(data=True)
-                        if d["properties"].get("name") == entity_name
+                        if d["properties"].get("name") == canonical_name
+                        and (
+                            not entity_type
+                            or not str(d.get("properties", {}).get("schema_type", "")).strip()
+                            or str(d.get("properties", {}).get("schema_type", "")).strip() == entity_type
+                        )
                     ),
                     None,
                 )
@@ -853,7 +996,7 @@ class KTBuilder:
         if not entity_node_id:
             entity_node_id = f"entity_{self.node_counter}"
             properties = {
-                "name": entity_name,
+                "name": canonical_name,
                 "chunk id": chunk_id
             }
             # # 鏍稿績淇敼锛氬鏋?entity_type 瀛樺湪锛屽氨鐢ㄥ畠鍋?label锛屽惁鍒欐墠鐢?"entity"
@@ -863,13 +1006,15 @@ class KTBuilder:
                 properties["schema_type"] = entity_type
             if self._is_paper_schema_type(entity_type):
                 meta = self.doc_meta_by_chunk_id.get(str(chunk_id), {})
-                aliases = [str(entity_name)]
-                title = meta.get("title")
-                if title and str(title) not in aliases:
-                    aliases.append(str(title))
-                properties["aliases"] = aliases
                 properties["doc_uid"] = str(meta.get("doc_uid", "")).strip()
                 properties["source_doc_id"] = str(meta.get("source_doc_id", "")).strip()
+            self._apply_entity_aliases_to_properties(
+                properties,
+                entity_name,
+                canonical_name,
+                entity_type,
+                chunk_id,
+            )
             self.graph.add_node(
                 entity_node_id,
                 label="entity",
@@ -889,9 +1034,13 @@ class KTBuilder:
                 node_props["source_doc_id"] = str(
                     meta.get("source_doc_id", node_props.get("source_doc_id", ""))
                 ).strip()
-            aliases = node_props.setdefault("aliases", [])
-            if entity_name not in aliases:
-                aliases.append(entity_name)
+            self._apply_entity_aliases_to_properties(
+                node_props,
+                entity_name,
+                canonical_name,
+                node_props.get("schema_type", entity_type),
+                chunk_id,
+            )
             self._register_entity_index(
                 entity_name,
                 entity_node_id,
@@ -1681,6 +1830,26 @@ class KTBuilder:
                 new_graph.add_edge(u, v, **data)
         self.graph = new_graph
 
+    def _save_entity_alias_audit_file(self) -> None:
+        output_path = f"output/graphs/{self.dataset_name}_entity_alias_audit.json"
+        rows = []
+        for (schema_type, canonical_name), aliases in sorted(
+            self.entity_alias_audit.items(),
+            key=lambda item: (item[0][0], item[0][1]),
+        ):
+            if len(aliases) <= 1:
+                continue
+            rows.append(
+                {
+                    "schema_type": schema_type,
+                    "canonical_name": canonical_name,
+                    "aliases": sorted(aliases),
+                }
+            )
+        with open(output_path, "w", encoding="utf-8") as f:
+            json.dump(rows, f, ensure_ascii=False, indent=2)
+        logger.info("Entity alias audit saved to %s (%d groups)", output_path, len(rows))
+
     def format_output(self) -> List[Dict[str, Any]]:
         """convert graph to specified output format"""
         output = []
@@ -1730,6 +1899,7 @@ class KTBuilder:
         with open(json_output_path, 'w', encoding='utf-8') as f:
             json.dump(output, f, ensure_ascii=False, indent=2)
         logger.info(f"Graph saved to {json_output_path}")
+        self._save_entity_alias_audit_file()
 
         stats_path = f"output/graphs/{self.dataset_name}_construction_stats.json"
         try:

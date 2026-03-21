@@ -48,13 +48,28 @@ def _node_display_name(retriever: Any, node_id: str) -> str:
     return str(props.get("name", node_id)).strip()
 
 
+def _node_schema_type(retriever: Any, node_id: str) -> str:
+    graph = getattr(retriever, "graph", None)
+    if graph is None or node_id not in graph.nodes:
+        return ""
+    props = graph.nodes[node_id].get("properties", {}) or {}
+    return str(props.get("schema_type", "")).strip()
+
+
+def _parse_entity_with_type(raw: str) -> Tuple[str, str]:
+    text = str(raw or "").strip()
+    match = re.match(r"^(.*?)(?:\s*\[schema_type:\s*([^\]]+)\])?$", text)
+    if not match:
+        return text, ""
+    return match.group(1).strip(), str(match.group(2) or "").strip()
+
+
 def _parse_formatted_triple(triple_text: str, bridge: ConstructionBridge) -> Optional[Tuple[str, str, str]]:
     text = str(triple_text or "").strip()
     if not text:
         return None
 
     text = re.sub(r"\s+\[score:\s*[-+]?[0-9]*\.?[0-9]+\]\s*$", "", text)
-    text = re.sub(r"\[[^\]]*\]", "", text)
     text = text.strip()
     if text.startswith("(") and text.endswith(")"):
         text = text[1:-1]
@@ -63,9 +78,11 @@ def _parse_formatted_triple(triple_text: str, bridge: ConstructionBridge) -> Opt
     if len(parts) != 3:
         return None
 
-    head = bridge.normalize_entity_name(parts[0])
+    head_text, head_type = _parse_entity_with_type(parts[0])
+    tail_text, tail_type = _parse_entity_with_type(parts[2])
+    head = bridge.normalize_entity_name(head_text, head_type)
     relation = bridge.normalize_relation_name(parts[1])
-    tail = bridge.normalize_entity_name(parts[2])
+    tail = bridge.normalize_entity_name(tail_text, tail_type)
     if not head or not relation or not tail:
         return None
     return (head, relation, tail)
@@ -78,14 +95,14 @@ def _paper_name_for_triple(
     bridge: ConstructionBridge,
 ) -> Optional[str]:
     sample_title = str(sample.get("meta", {}).get("title", "")).strip()
-    normalized_sample_title = bridge.normalize_entity_name(sample_title)
+    normalized_sample_title = bridge.normalize_entity_name(sample_title, "论文")
     head, _, tail = triple
     head_type = entity_types.get(head, "")
     tail_type = entity_types.get(tail, "")
 
-    if bridge.is_paper_type(head_type) or bridge.normalize_entity_name(head) == normalized_sample_title:
+    if bridge.is_paper_type(head_type) or bridge.normalize_entity_name(head, head_type) == normalized_sample_title:
         return head
-    if bridge.is_paper_type(tail_type) or bridge.normalize_entity_name(tail) == normalized_sample_title:
+    if bridge.is_paper_type(tail_type) or bridge.normalize_entity_name(tail, tail_type) == normalized_sample_title:
         return tail
     return None
 
@@ -118,11 +135,11 @@ def evaluate_sample_retrieval(
     triple_top_k: int,
 ) -> Dict[str, Any]:
     title = str(sample.get("meta", {}).get("title", "")).strip()
-    normalized_title = bridge.normalize_entity_name(title)
+    normalized_title = bridge.normalize_entity_name(title, "论文")
     _, retrieve_result = retriever.retrieve(title)
     top_nodes = retrieve_result.get("path1_results", {}).get("top_nodes", []) or []
     top_node_names = [
-        bridge.normalize_entity_name(_node_display_name(retriever, node_id))
+        bridge.normalize_entity_name(_node_display_name(retriever, node_id), _node_schema_type(retriever, node_id))
         for node_id in top_nodes[:paper_top_k]
     ]
     paper_hit = normalized_title in top_node_names
@@ -141,9 +158,9 @@ def evaluate_sample_retrieval(
         normalized_gold_triple = None
         if isinstance(triple, list) and len(triple) >= 3:
             normalized_gold_triple = (
-                bridge.normalize_entity_name(triple[0]),
+                bridge.normalize_entity_name(triple[0], entity_types.get(triple[0], "")),
                 bridge.normalize_relation_name(triple[1]),
-                bridge.normalize_entity_name(triple[2]),
+                bridge.normalize_entity_name(triple[2], entity_types.get(triple[2], "")),
             )
 
         if not query:

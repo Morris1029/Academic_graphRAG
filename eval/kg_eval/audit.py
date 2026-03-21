@@ -85,6 +85,7 @@ def evaluate_graph_structure(
     graph, relationships = reconstruct_graph_from_relationships(graph_path)
     primary_nodes = []
     duplicate_groups: Dict[Tuple[str, str], List[str]] = {}
+    alias_groups: Dict[Tuple[str, str], set[str]] = {}
 
     for node_id, node_data in graph.nodes(data=True):
         label = str(node_data.get("label", "")).strip().lower()
@@ -96,9 +97,16 @@ def evaluate_graph_structure(
         primary_nodes.append(node_id)
         key = (
             schema_type,
-            bridge.normalize_entity_name(props.get("name", "")),
+            bridge.normalize_entity_name(props.get("name", ""), schema_type),
         )
         duplicate_groups.setdefault(key, []).append(node_id)
+        alias_groups.setdefault(key, set()).add(str(props.get("name", "")).strip())
+        aliases = props.get("aliases", []) or []
+        if isinstance(aliases, list):
+            for alias in aliases:
+                alias_text = str(alias).strip()
+                if alias_text:
+                    alias_groups[key].add(alias_text)
 
     duplicate_extra = sum(max(0, len(group) - 1) for group in duplicate_groups.values() if len(group) > 1)
     duplicate_node_rate = duplicate_extra / len(primary_nodes) if primary_nodes else 0.0
@@ -146,6 +154,16 @@ def evaluate_graph_structure(
     return {
         "primary_node_total": len(primary_nodes),
         "duplicate_node_rate": duplicate_node_rate,
+        "semantic_alias_group_total": sum(1 for aliases in alias_groups.values() if len(aliases) > 1),
+        "semantic_alias_groups": [
+            {
+                "schema_type": key[0],
+                "canonical_key": key[1],
+                "aliases": sorted(aliases),
+            }
+            for key, aliases in sorted(alias_groups.items(), key=lambda item: (item[0][0], item[0][1]))
+            if len(aliases) > 1
+        ],
         "isolated_node_rate": isolated_node_rate,
         "paper_node_total": len(paper_nodes),
         "paper_author_edge_coverage": paper_author_edge_coverage,
