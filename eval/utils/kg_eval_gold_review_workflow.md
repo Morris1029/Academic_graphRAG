@@ -1,27 +1,37 @@
 # KG Eval Gold 预标注与人工审核操作说明
 
-本文档用于记录 `AIGC-EDU` 图谱构建 gold 集的预标注与人工审核流程，便于后续重复执行。
+本文档用于记录 `AIGC-EDU` 图谱构建 gold 集的预标注、人工审核与 schema 变更后的重启流程，便于后续重复执行。
 
-## 1. 当前使用的文件与默认配置
+## 1. 当前文件约定
 
-- 原始抽样样本文件：
+- 原始抽样样本：
   - `eval/kg_eval/dataset/AIGC-EDU-kgval.json`
-- Gold 工作文件：
+- 旧版 gold 工作文件（冻结为历史参考，不再继续写入）：
   - `eval/kg_eval/dataset/AIGC-EDU-kgval.gold.json`
-- `kg_eval` 当前默认配置见：
-  - `eval/kg_eval/config.yaml`
+- 新版 gold 工作文件（当前应继续使用）：
+  - `eval/kg_eval/dataset/AIGC-EDU-kgval.v2.gold.json`
 
-当前默认约定：
+说明：
 
-- 默认样本路径：`eval/kg_eval/dataset/AIGC-EDU-kgval.gold.json`
-- 默认 gold 预标注模型：`qwen_kg_candidate`
-- `qwen_kg_candidate` 实际绑定的是 `qwen-max`
+- 当知识图谱生成逻辑、节点类型或属性口径发生变化时，不要继续在旧版 `.gold.json` 上累计人工修订。
+- 当前新版 gold 统一在 `AIGC-EDU-kgval.v2.gold.json` 中维护。
 
-因此，后续一般不需要再显式传 `--sample-path` 和 `--profile`。
+## 2. 教师模型与运行口径
 
-## 2. 状态字段的含义
+- 教师模型 profile：
+  - `qwen_kg_candidate`
+- 该 profile 当前绑定：
+  - `qwen-max`
 
-`eval/kg_eval/dataset/AIGC-EDU-kgval.gold.json` 中，每条样本都会带有：
+注意：
+
+- 当前 `eval/kg_eval/config.yaml` 的默认 `sample_path` 仍可能指向旧文件。
+- 因此在新版 gold 构建阶段，建议每次都显式传入：
+  - `--sample-path eval/kg_eval/dataset/AIGC-EDU-kgval.v2.gold.json`
+
+## 3. 状态字段含义
+
+每条样本都带有如下结构：
 
 ```json
 "kg_eval": {
@@ -40,55 +50,47 @@
 }
 ```
 
-其中：
+状态含义如下：
 
 - `pending`：尚未进行模型预标注
 - `draft`：已经跑过模型预标注，但还未人工审核完成
-- `approved`：已经人工审核完成，可作为后续评估使用的 gold 数据
+- `approved`：已经人工审核完成，可作为后续评估使用的 gold
 
-## 3. 第一步：运行模型预标注
+## 4. schema 变更后的重启流程
 
-### 3.1 第一批 20 条
+### 4.1 新建新版 gold 工作文件
 
-运行：
+如果需要从头重启一轮新版 gold，使用原始抽样样本重新复制：
 
-```bash
-python -m eval.kg_eval.run --config eval/kg_eval/config.yaml generate_gold --max-samples 20
+```powershell
+Copy-Item "eval/kg_eval/dataset/AIGC-EDU-kgval.json" "eval/kg_eval/dataset/AIGC-EDU-kgval.v2.gold.json"
 ```
 
-作用：
+原则：
 
-- 对前 20 条样本执行模型抽取
-- 将结果直接写回 `eval/kg_eval/dataset/AIGC-EDU-kgval.gold.json`
-- 这 20 条样本的 `status` 会变成 `draft`
+- 从原始抽样样本复制，不要从旧版 `AIGC-EDU-kgval.gold.json` 复制
+- 旧版 gold 仅作历史参考，不再作为新版预标注输入
 
-### 3.2 后续批次
+### 4.2 第一批预标注
 
-如果要继续下一批，则递增 `--max-samples`：
+先跑前 20 条：
 
 ```bash
-python -m eval.kg_eval.run --config eval/kg_eval/config.yaml generate_gold --max-samples 40
-python -m eval.kg_eval.run --config eval/kg_eval/config.yaml generate_gold --max-samples 60
-python -m eval.kg_eval.run --config eval/kg_eval/config.yaml generate_gold --max-samples 80
-python -m eval.kg_eval.run --config eval/kg_eval/config.yaml generate_gold --max-samples 100
+python -m eval.kg_eval.run --config eval/kg_eval/config.yaml generate_gold --sample-path eval/kg_eval/dataset/AIGC-EDU-kgval.v2.gold.json --profile qwen_kg_candidate --max-samples 20
 ```
 
-逻辑说明：
+执行后预期：
 
-- 已经是 `approved` 的样本会被跳过
-- 不是 `approved` 的样本会被新的模型结果重新覆盖
+- 前 20 条样本变为 `draft`
+- 其余样本保持 `pending`
 
-因此，进入下一批之前，必须先把上一批中已经审核完成的样本改成 `approved`。
+### 4.3 人工审核
 
-## 4. 第二步：人工审核与修正
+直接打开并修改：
 
-直接在下面这个文件里修改：
+- `eval/kg_eval/dataset/AIGC-EDU-kgval.v2.gold.json`
 
-- `eval/kg_eval/dataset/AIGC-EDU-kgval.gold.json`
-
-### 4.1 需要重点检查和修正的字段
-
-每条样本主要审核以下内容：
+重点审核字段：
 
 - `kg_eval.gold.extraction.entity_types`
 - `kg_eval.gold.extraction.triples`
@@ -102,134 +104,110 @@ python -m eval.kg_eval.run --config eval/kg_eval/config.yaml generate_gold --max
 
 审核完成后，将：
 
-- `kg_eval.gold.status` 改成 `approved`
+- `kg_eval.gold.status` 改为 `approved`
 
-尚未审核完的，保留 `draft`。
+未审完的样本继续保留 `draft`。
 
-### 4.2 审核时建议关注的内容
+## 5. 如何继续下一批
 
-#### 实体类型 `entity_types`
-
-检查：
-
-- 实体名是否具体、清晰，不要保留过于空泛的概念词
-- 实体类型是否合理，例如论文、作者、机构、期刊、研究主题、研究方法等
-- 同一个实体是否因为命名不一致被拆成多个版本
-
-#### 关系三元组 `triples`
-
-检查：
-
-- 三元组是否完整，必须是 `[头实体, 关系, 尾实体]`
-- 关系方向是否正确
-- 关系是否来自论文元数据或摘要的明确信息，而不是模型臆断
-- 同一含义是否被重复表达为多条几乎相同的三元组
-
-#### 属性 `attributes`
-
-检查：
-
-- 属性是否是简洁的事实性短语
-- 不要整段复制摘要
-- 属性是否附着在正确的实体上
-
-### 4.3 审核完成后的最小修改模板
-
-可参考如下形式：
-
-```json
-"gold": {
-  "status": "approved",
-  "generator_profile": "qwen_kg_candidate",
-  "reviewer": "你的名字",
-  "review_notes": "已完成人工校对，修正了作者实体和部分关系方向。",
-  "updated_at": "2026-03-21T15:30:00Z",
-  "extraction": {
-    "entity_types": {
-      "实体A": "类型A"
-    },
-    "triples": [
-      ["实体A", "关系", "实体B"]
-    ],
-    "attributes": {
-      "实体A": ["属性1", "属性2"]
-    }
-  }
-}
-```
-
-## 5. 第三步：如何继续下一批
-
-推荐的固定节奏如下：
+推荐按 20 篇一批推进：
 
 1. `--max-samples 20`
-2. 审核前 20 条并改成 `approved`
+2. 审核前 20 条并改为 `approved`
 3. `--max-samples 40`
-4. 审核第 21 到 40 条并改成 `approved`
+4. 审核第 21 到 40 条并改为 `approved`
 5. `--max-samples 60`
-6. 依次推进，直到目标规模
+6. 以此类推
 
-不要这样做：
-
-- 前 20 条还停留在 `draft`，就直接跑 `--max-samples 40`
-
-因为这样会导致前 20 条被重新覆盖。
-
-## 6. 如何检查当前进度
-
-### 6.1 查看状态分布
+对应命令示例：
 
 ```bash
-python -c "import json; from collections import Counter; data=json.load(open('eval/kg_eval/dataset/AIGC-EDU-kgval.gold.json','r',encoding='utf-8')); print(Counter((x.get('kg_eval',{}).get('gold',{}).get('status','pending') for x in data)))"
+python -m eval.kg_eval.run --config eval/kg_eval/config.yaml generate_gold --sample-path eval/kg_eval/dataset/AIGC-EDU-kgval.v2.gold.json --profile qwen_kg_candidate --max-samples 40
+python -m eval.kg_eval.run --config eval/kg_eval/config.yaml generate_gold --sample-path eval/kg_eval/dataset/AIGC-EDU-kgval.v2.gold.json --profile qwen_kg_candidate --max-samples 60
 ```
 
-示例结果：
+原因：
+
+- 当前代码只会跳过 `approved`
+- 所有非 `approved` 样本在再次运行 `generate_gold` 时都会被覆盖
+
+因此：
+
+- 如果某条样本已经人工改过，但还停留在 `draft`，再次运行时仍会被新结果覆盖
+- 一批审核完成后，必须先改成 `approved`，再继续跑下一批
+
+## 6. 人工审核时建议重点检查的内容
+
+### 6.1 实体类型
+
+检查：
+
+- 实体命名是否具体、稳定、可复用
+- 类型是否符合当前新版图谱 schema
+- 同一实体是否因为大小写、缩写或表述差异被拆成多个版本
+
+### 6.2 三元组关系
+
+检查：
+
+- 三元组格式是否完整：`[头实体, 关系, 尾实体]`
+- 关系方向是否正确
+- 关系是否能从标题、摘要或论文元数据中得到明确支持
+- 是否存在重复或语义等价但写法不同的三元组
+
+### 6.3 属性
+
+检查：
+
+- 属性是否是简洁、事实性的短语
+- 不要直接复制整段摘要
+- 属性是否挂载到正确的实体上
+- 属性表达是否符合你当前新版图谱的属性口径
+
+## 7. 进度检查命令
+
+### 7.1 查看状态分布
+
+```bash
+python -c "import json; from collections import Counter; data=json.load(open('eval/kg_eval/dataset/AIGC-EDU-kgval.v2.gold.json','r',encoding='utf-8')); print(Counter((x.get('kg_eval',{}).get('gold',{}).get('status','pending') for x in data)))"
+```
+
+典型结果示例：
 
 - `draft: 20, pending: 80`
-- 或 `approved: 20, pending: 80`
+- `approved: 20, pending: 80`
+- `approved: 40, pending: 60`
 
-### 6.2 查看前 30 条的状态
+### 7.2 查看前 30 条状态
 
 ```bash
-python -c "import json; data=json.load(open('eval/kg_eval/dataset/AIGC-EDU-kgval.gold.json','r',encoding='utf-8')); [print(i+1, x['id'], x.get('kg_eval',{}).get('gold',{}).get('status','pending')) for i,x in enumerate(data[:30])]"
+python -c "import json; data=json.load(open('eval/kg_eval/dataset/AIGC-EDU-kgval.v2.gold.json','r',encoding='utf-8')); [print(i+1, x['id'], x.get('kg_eval',{}).get('gold',{}).get('status','pending')) for i,x in enumerate(data[:30])]"
 ```
 
-## 7. 常见问题
+## 8. 常见问题
 
-### Q1：为什么文件里有很多 `pending`？
+### Q1：为什么文件里还有很多 `pending`？
 
-因为这个文件中包含的是完整的样本集，例如 100 条。你只对前 20 条跑了预标注时：
+因为整个文件保存的是完整抽样集，例如 100 条样本。若你只跑了前 20 条预标注：
 
 - 前 20 条会变成 `draft`
-- 其余样本仍然是默认的 `pending`
+- 其余 80 条仍保持 `pending`
 
-这属于正常现象。
+这是正常现象。
 
-### Q2：为什么我已经人工改过，又被覆盖了？
+### Q2：为什么我人工改过的结果又被覆盖了？
 
-因为当前代码只会跳过 `approved`，不会跳过 `draft`。
+因为当前逻辑只跳过 `approved`，不会跳过 `draft`。
 
 也就是说：
 
 - `approved`：安全，不会被重新生成覆盖
-- `draft`：再次运行 `generate_gold` 时可能被覆盖
+- `draft`：再次运行 `generate_gold` 时仍可能被覆盖
 
 ### Q3：什么时候再跑评估？
 
-等你先积累出一批稳定的 `approved` 样本后，再运行后续评估流程。当前阶段只做 gold 集构建，不做 `run` 评估。
+等新版 `v2.gold` 中积累出一批稳定的 `approved` 样本后，再将后续评估入口指向：
 
-## 8. 推荐的本轮操作
+- `eval/kg_eval/dataset/AIGC-EDU-kgval.v2.gold.json`
 
-如果你当前已经完成了前 20 条的模型预标注，建议下一步严格按下面顺序执行：
-
-1. 打开 `eval/kg_eval/dataset/AIGC-EDU-kgval.gold.json`
-2. 审核并修正前 20 条 `draft`
-3. 将已完成的样本状态改成 `approved`
-4. 检查状态分布，确认前 20 条都已 `approved`
-5. 再运行：
-
-```bash
-python -m eval.kg_eval.run --config eval/kg_eval/config.yaml generate_gold --max-samples 40
-```
-
-这样系统就会跳过前 20 条，继续为第 21 到 40 条生成新的 `draft` 结果。
+当前阶段只做 gold 集构建，不做 `run` 评估。

@@ -1,9 +1,11 @@
 import json
 import re
+import threading
 import time
 import warnings
-from collections import defaultdict
-from typing import Any, Dict, List, Tuple
+from collections import defaultdict, deque
+from concurrent import futures
+from typing import Any, Dict, List, Optional, Tuple
 
 import networkx as nx
 import numpy as np
@@ -72,6 +74,20 @@ class FastTreeComm:
             1,
             int(getattr(config.tree_comm, "max_triples_per_node", 8)) if config else 8,
         )
+        self.community_llm_batch_size = max(
+            1,
+            int(getattr(config.tree_comm, "llm_batch_size", 8)) if config else 8,
+        )
+        self.max_concurrent_llm_requests = max(
+            1,
+            int(getattr(config.tree_comm, "max_concurrent_llm_requests", 4)) if config else 4,
+        )
+        self.requests_per_minute = max(
+            0,
+            int(getattr(config.tree_comm, "requests_per_minute", 240)) if config else 240,
+        )
+        self.rate_limit_lock = threading.Lock()
+        self.request_times = deque()
         self.semantic_cache = {}
         self.struct_weight = struct_weight
         self.node_list = list(graph.nodes())
@@ -540,6 +556,48 @@ class FastTreeComm:
                     return [item for item in value if isinstance(item, dict)]
         return []
 
+    def _prune_rate_limit_window(self, now: float) -> None:
+        while self.request_times and now - self.request_times[0] >= 60:
+            self.request_times.popleft()
+
+    def _wait_for_llm_slot(self) -> None:
+        requests_per_minute = max(0, int(getattr(self, "requests_per_minute", 240)))
+        if requests_per_minute <= 0:
+            return
+
+        if not hasattr(self, "rate_limit_lock"):
+            self.rate_limit_lock = threading.Lock()
+        if not hasattr(self, "request_times"):
+            self.request_times = deque()
+
+        while True:
+            sleep_for = 0.0
+            with self.rate_limit_lock:
+                now = time.monotonic()
+                self._prune_rate_limit_window(now)
+                if len(self.request_times) < requests_per_minute:
+                    self.request_times.append(now)
+                    return
+                sleep_for = max(0.05, 60 - (now - self.request_times[0]))
+            time.sleep(sleep_for)
+
+    def _resolve_community_batch_size(self, batch_size: Optional[int]) -> int:
+        if batch_size is not None:
+            return max(1, int(batch_size))
+        return max(1, int(getattr(self, "community_llm_batch_size", 8)))
+
+    def _build_community_batches(
+        self,
+        communities: List[Tuple[str, List[str]]],
+        batch_size: int,
+    ) -> List[List[Tuple[str, List[str]]]]:
+        if not communities:
+            return []
+        return [
+            communities[index:index + batch_size]
+            for index in range(0, len(communities), batch_size)
+        ]
+
     def _build_batch_prompt(self, community_batch):
         batch_data = []
         for comm_id, members in community_batch:
@@ -587,64 +645,122 @@ class FastTreeComm:
         response_text = self.llm_client.call_api(content)
         response_json = json_repair.loads(response_text)
         return self._normalize_llm_community_payload(response_json)
-        
 
-    def create_super_nodes(self, comm_to_nodes: Dict[str, List[str]], level: int = 4, batch_size: int = 5):
+    def _request_community_batch(self, community_batch: List[Tuple[str, List[str]]]) -> Dict[str, Dict[str, Any]]:
+        if not self.llm_client or not community_batch:
+            return {}
+
+        batch_prompt = self._build_batch_prompt(community_batch)
+        self._wait_for_llm_slot()
+        llm_results = self._call_llm_api_batch(batch_prompt)
+        return {
+            str(item.get("id", "")): item
+            for item in llm_results
+            if str(item.get("id", "")).strip()
+        }
+
+    def _apply_community_result(
+        self,
+        comm_id: str,
+        members: List[str],
+        llm_info: Optional[Dict[str, Any]],
+        level: int,
+        super_nodes: Dict[str, List[str]],
+    ) -> None:
+        context = self._collect_community_context(members)
+        llm_info = llm_info or {}
+        llm_name = self._sanitize_community_name(llm_info.get("name", ""))
+        if self._is_valid_community_name(llm_name, context):
+            comm_name = llm_name
+        else:
+            comm_name = self._build_fallback_community_name(context)
+
+        llm_summary = str(llm_info.get("summary", "")).strip()
+        comm_summary = llm_summary or self._build_fallback_community_summary(context, comm_name)
+
+        super_node_id = f"comm_{level}_{comm_id}"
+        member_names = [self.node_names[n] for n in members]
+
+        self.graph.add_node(
+            super_node_id,
+            label="community",
+            level=level,
+            properties={
+                "name": comm_name,
+                "description": comm_summary,
+                "members": member_names,
+                "schema_type": "\u4e3b\u9898\u793e\u533a",
+            }
+        )
+
+        for node in members:
+            self.graph.add_edge(node, super_node_id, relation="member_of")
+
+        super_nodes[super_node_id] = member_names
+
+    def create_super_nodes(self, comm_to_nodes: Dict[str, List[str]], level: int = 4, batch_size: Optional[int] = None):
         super_nodes = {}
-        communities = [(comm_id, members) for comm_id, members in comm_to_nodes.items() 
-                      if len(members) >= 2]
-        
-        for i in range(0, len(communities), batch_size):
-            batch = communities[i:i+batch_size]
-            
-            if self.llm_client:
-                try:
-                    batch_prompt = self._build_batch_prompt(batch)
-                    llm_results = self._call_llm_api_batch(batch_prompt)
-                    
-                    llm_dict = {str(item.get("id", "")): item for item in llm_results}
-                except Exception as e:
-                    logger.error(f"Batch LLM processing failed: {e}")
-                    llm_dict = {}
-            else:
-                llm_dict = {}
-            
-            for comm_id, members in batch:
-                try:
-                    context = self._collect_community_context(members)
-                    llm_info = llm_dict.get(str(comm_id), {})
-                    llm_name = self._sanitize_community_name(llm_info.get("name", ""))
-                    if self._is_valid_community_name(llm_name, context):
-                        comm_name = llm_name
-                    else:
-                        comm_name = self._build_fallback_community_name(context)
+        communities = [
+            (str(comm_id), members)
+            for comm_id, members in comm_to_nodes.items()
+            if len(members) >= 2
+        ]
+        resolved_batch_size = self._resolve_community_batch_size(batch_size)
+        community_batches = self._build_community_batches(communities, resolved_batch_size)
+        failed_batches = 0
+        batch_results: Dict[int, Dict[str, Dict[str, Any]]] = {}
+        naming_start = time.time()
 
-                    llm_summary = str(llm_info.get("summary", "")).strip()
-                    comm_summary = llm_summary or self._build_fallback_community_summary(context, comm_name)
-                    
-                    super_node_id = f"comm_{level}_{comm_id}"
-                    member_names = [self.node_names[n] for n in members]
-                    
-                    self.graph.add_node(
-                        super_node_id,
-                        label="community",
-                        level=level,
-                        properties={
-                            "name": comm_name,
-                            "description": comm_summary,
-                            "members": member_names,
-                            "schema_type": "\u4e3b\u9898\u793e\u533a",
-                        }
-                    )
-                    
-                    for node in members:
-                        self.graph.add_edge(node, super_node_id, relation="member_of")
-                    
-                    super_nodes[super_node_id] = member_names
-                    
-                except Exception as e:
-                    logger.error(f"Error creating super node for community {comm_id}: {e}")
-        
+        logger.info(
+            "Starting community naming for %d communities across %d batches "
+            "(batch_size=%d, max_concurrent_llm_requests=%d, requests_per_minute=%d)",
+            len(communities),
+            len(community_batches),
+            resolved_batch_size,
+            max(1, int(getattr(self, "max_concurrent_llm_requests", 4))),
+            max(0, int(getattr(self, "requests_per_minute", 240))),
+        )
+
+        if self.llm_client and community_batches:
+            max_workers = min(
+                len(community_batches),
+                max(1, int(getattr(self, "max_concurrent_llm_requests", 4))),
+            )
+            with futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+                future_to_batch_index = {
+                    executor.submit(self._request_community_batch, batch): index
+                    for index, batch in enumerate(community_batches)
+                }
+                for future in futures.as_completed(future_to_batch_index):
+                    batch_index = future_to_batch_index[future]
+                    try:
+                        batch_results[batch_index] = future.result()
+                    except Exception as e:
+                        failed_batches += 1
+                        batch_results[batch_index] = {}
+                        logger.error(f"Community naming batch {batch_index} failed: {e}")
+        elif not self.llm_client and communities:
+            logger.info("TreeComm LLM client unavailable; using fallback naming for all communities")
+
+        llm_dict: Dict[str, Dict[str, Any]] = {}
+        for batch_index in range(len(community_batches)):
+            llm_dict.update(batch_results.get(batch_index, {}))
+
+        for comm_id, members in communities:
+            try:
+                self._apply_community_result(comm_id, members, llm_dict.get(comm_id), level, super_nodes)
+            except Exception as e:
+                logger.error(f"Error creating super node for community {comm_id}: {e}")
+
+        naming_elapsed = time.time() - naming_start
+        logger.info(
+            "Community naming finished in %.2fs (communities=%d, batches=%d, batch_size=%d, failed_batches=%d)",
+            naming_elapsed,
+            len(communities),
+            len(community_batches),
+            resolved_batch_size,
+            failed_batches,
+        )
         logger.info(f"Created {len(super_nodes)} super nodes")
         return super_nodes
 

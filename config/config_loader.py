@@ -70,6 +70,9 @@ class TreeCommConfig:
     max_total_communities: int = 100
     triple_text_max_chars: int = 360
     max_triples_per_node: int = 8
+    llm_batch_size: int = 8
+    max_concurrent_llm_requests: int = 4
+    requests_per_minute: int = 240
 
 @dataclass
 class FAISSConfig:

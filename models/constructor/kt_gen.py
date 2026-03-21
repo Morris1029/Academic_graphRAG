@@ -1798,6 +1798,7 @@ class KTBuilder:
             self.graph,
             embedding_model=self.config.tree_comm.embedding_model,
             struct_weight=self.config.tree_comm.struct_weight,
+            config=self.config,
         )
         comm_to_nodes = _tree_comm.detect_communities(level2_nodes)
 

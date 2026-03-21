@@ -14,9 +14,9 @@ construction:
   prompt_version: v1
   datasets_no_chunk:
     - demo
-  max_workers: 16
-  max_concurrent_llm_requests: 4
-  requests_per_minute: 120
+  max_workers: 18
+  max_concurrent_llm_requests: 30
+  requests_per_minute: 720
   tokens_per_minute_budget: 0
   llm_timeout_seconds: 90
   retry_attempts: 3
@@ -34,6 +34,9 @@ construction:
     max_total_communities: 100
     triple_text_max_chars: 360
     max_triples_per_node: 8
+    llm_batch_size: 8
+    max_concurrent_llm_requests: 10
+    requests_per_minute: 400
 
 active_dataset: demo
 
