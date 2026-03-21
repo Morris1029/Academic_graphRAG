@@ -2,7 +2,7 @@ env_path: "eval/.env"
 
 defaults:
   dataset_name: "AIGC-EDU"
-  sample_path: "eval/kg_eval/AIGC-EDU-test.json"
+  sample_path: "eval/kg_eval/dataset/AIGC-EDU-kgval.json"
   main_config_path: "config/base_config.yaml"
   results_dir: "eval/results/kg_eval"
   cross_doc_review_sample_size: 50

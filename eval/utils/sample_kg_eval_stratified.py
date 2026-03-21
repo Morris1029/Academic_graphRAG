@@ -386,7 +386,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--output-path",
-        default="eval/kg_eval/AIGC-EDU-test.json",
+        default="eval/kg_eval/dataset/AIGC-EDU-kgval.json",
         help="Path to the sampled output JSON file",
     )
     parser.add_argument(
