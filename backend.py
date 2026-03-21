@@ -27,6 +27,7 @@ import uvicorn
 
 from utils.logger import logger
 from utils.dataset_audit import audit_dataset
+from utils.paths import repo_path, repo_str
 import ast
 
 # Import document parser
@@ -50,17 +51,55 @@ except ImportError as e:
     GRAPHRAG_AVAILABLE = False
     logger.error(f"GraphRAG components not available: {e}")
 
+ASSETS_DIR = repo_path("assets")
+FRONTEND_DIR = repo_path("frontend")
+UPLOADED_DATA_DIR = repo_path("data", "uploaded")
+OUTPUT_GRAPHS_DIR = repo_path("output", "graphs")
+OUTPUT_CHUNKS_DIR = repo_path("output", "chunks")
+OUTPUT_LOGS_DIR = repo_path("output", "logs")
+SCHEMAS_DIR = repo_path("schemas")
+FAISS_CACHE_ROOT = repo_path("retriever", "faiss_cache_new")
+BASE_CONFIG_PATH = repo_str("config", "base_config.yaml")
+FRONTEND_INDEX_PATH = repo_str("frontend", "index_new.html")
+FRONTEND_STYLE_PATH = repo_str("frontend", "style.css")
+FRONTEND_SCRIPT_PATH = repo_str("frontend", "script.js")
+FAVICON_PATH = repo_str("assets", "SYSU.png")
+DEMO_SCHEMA_PATH = repo_str("schemas", "demo.json")
+DEMO_CORPUS_PATH = repo_str("data", "demo", "demo_corpus.json")
+DEMO_GRAPH_PATH = repo_str("output", "graphs", "demo_new.json")
+
+
+def uploaded_dataset_dir(dataset_name: str) -> str:
+    return repo_str("data", "uploaded", dataset_name)
+
+
+def dataset_corpus_path(dataset_name: str) -> str:
+    return repo_str("data", "uploaded", dataset_name, "corpus.json")
+
+
+def dataset_schema_path(dataset_name: str) -> str:
+    return repo_str("schemas", f"{dataset_name}.json")
+
+
+def dataset_graph_path(dataset_name: str) -> str:
+    return repo_str("output", "graphs", f"{dataset_name}_new.json")
+
+
+def dataset_chunk_path(dataset_name: str) -> str:
+    return repo_str("output", "chunks", f"{dataset_name}.txt")
+
+
 app = FastAPI(title="Youtu-GraphRAG Unified Interface", version="1.0.0")
 
 # Mount static files (assets directory)
-app.mount("/assets", StaticFiles(directory="assets"), name="assets")
+app.mount("/assets", StaticFiles(directory=str(ASSETS_DIR)), name="assets")
 # Mount frontend directory for frontend assets
-app.mount("/frontend", StaticFiles(directory="frontend"), name="frontend")
+app.mount("/frontend", StaticFiles(directory=str(FRONTEND_DIR)), name="frontend")
 
 
 @app.get("/favicon.ico", include_in_schema=False)
 async def favicon():
-    return FileResponse("assets/SYSU.png")
+    return FileResponse(FAVICON_PATH)
 
 # CORS middleware
 app.add_middleware(
@@ -200,8 +239,8 @@ class QuestionResponse(BaseModel):
 
 def ensure_demo_schema_exists() -> str:
     """Ensure default demo schema exists and return its path."""
-    os.makedirs("schemas", exist_ok=True)
-    schema_path = "schemas/demo.json"
+    os.makedirs(SCHEMAS_DIR, exist_ok=True)
+    schema_path = DEMO_SCHEMA_PATH
     if not os.path.exists(schema_path):
         demo_schema = {
             "Nodes": [
@@ -225,7 +264,7 @@ def ensure_demo_schema_exists() -> str:
 def get_schema_path_for_dataset(dataset_name: str) -> str:
     """Return dataset-specific schema if present; otherwise fallback to demo schema."""
     if dataset_name and dataset_name != "demo":
-        ds_schema = f"schemas/{dataset_name}.json"
+        ds_schema = dataset_schema_path(dataset_name)
         if os.path.exists(ds_schema):
             return ds_schema
     return ensure_demo_schema_exists()
@@ -286,28 +325,28 @@ async def clear_cache_files(dataset_name: str):
     """Clear all cache files for a dataset before graph construction"""
     try:
         # Clear FAISS cache files
-        faiss_cache_dir = f"retriever/faiss_cache_new/{dataset_name}"
+        faiss_cache_dir = str(FAISS_CACHE_ROOT / dataset_name)
         if os.path.exists(faiss_cache_dir):
             shutil.rmtree(faiss_cache_dir)
             logger.info(f"Cleared FAISS cache directory: {faiss_cache_dir}")
 
         # Clear output chunks
-        chunk_file = f"output/chunks/{dataset_name}.txt"
+        chunk_file = dataset_chunk_path(dataset_name)
         if os.path.exists(chunk_file):
             os.remove(chunk_file)
             logger.info(f"Cleared chunk file: {chunk_file}")
 
         # Clear output graphs
-        graph_file = f"output/graphs/{dataset_name}_new.json"
+        graph_file = dataset_graph_path(dataset_name)
         if os.path.exists(graph_file):
             os.remove(graph_file)
             logger.info(f"Cleared graph file: {graph_file}")
 
         # Clear any other cache files with dataset name pattern
         cache_patterns = [
-            f"output/logs/{dataset_name}_*.log",
-            f"output/chunks/{dataset_name}_*",
-            f"output/graphs/{dataset_name}_*"
+            repo_str("output", "logs", f"{dataset_name}_*.log"),
+            repo_str("output", "chunks", f"{dataset_name}_*"),
+            repo_str("output", "graphs", f"{dataset_name}_*"),
         ]
 
         for pattern in cache_patterns:
@@ -351,7 +390,7 @@ async def get_dataset_audit(dataset_name: str):
 @app.get("/")
 async def read_root():
     # 1. 确保这里指向你新拆分出的 index_new.html
-    frontend_path = "frontend/index_new.html"
+    frontend_path = FRONTEND_INDEX_PATH
     if os.path.exists(frontend_path):
         return FileResponse(frontend_path)
     return {"message": "Youtu-GraphRAG Unified Interface is running!", "status": "ok"}
@@ -359,12 +398,12 @@ async def read_root():
 
 @app.get("/style.css")
 async def read_css():
-    return FileResponse("frontend/style.css")
+    return FileResponse(FRONTEND_STYLE_PATH)
 
 
 @app.get("/script.js")
 async def read_js():
-    return FileResponse("frontend/script.js")
+    return FileResponse(FRONTEND_SCRIPT_PATH)
 
 
 @app.get("/api/status")
@@ -407,11 +446,11 @@ async def upload_files(files: List[UploadFile] = File(...), client_id: str = "de
         # Add counter if dataset already exists
         base_name = dataset_name
         counter = 1
-        while os.path.exists(f"data/uploaded/{dataset_name}"):
+        while os.path.exists(uploaded_dataset_dir(dataset_name)):
             dataset_name = f"{base_name}_{counter}"
             counter += 1
 
-        upload_dir = f"data/uploaded/{dataset_name}"
+        upload_dir = uploaded_dataset_dir(dataset_name)
         os.makedirs(upload_dir, exist_ok=True)
 
         await send_progress_update(client_id, "upload", 10, "Starting file upload...")
@@ -516,7 +555,7 @@ async def upload_files(files: List[UploadFile] = File(...), client_id: str = "de
             raise HTTPException(status_code=400, detail=msg)
 
         # Save corpus data
-        corpus_path = f"{upload_dir}/corpus.json"
+        corpus_path = dataset_corpus_path(dataset_name)
         with open(corpus_path, 'w', encoding='utf-8') as f:
             json.dump(corpus_data, f, ensure_ascii=False, indent=2)
 
@@ -563,13 +602,13 @@ async def construct_graph(request: GraphConstructionRequest, client_id: str = "d
         await send_progress_update(client_id, "construction", 5, "Initializing graph builder...")
 
         # Get dataset paths
-        corpus_path = f"data/uploaded/{dataset_name}/corpus.json"
+        corpus_path = dataset_corpus_path(dataset_name)
         # Choose schema: dataset-specific or default demo
         schema_path = get_schema_path_for_dataset(dataset_name)
 
         if not os.path.exists(corpus_path):
             # Try demo dataset
-            corpus_path = "data/demo/demo_corpus.json"
+            corpus_path = DEMO_CORPUS_PATH
 
         if not os.path.exists(corpus_path):
             raise HTTPException(status_code=404, detail="Dataset not found")
@@ -579,7 +618,7 @@ async def construct_graph(request: GraphConstructionRequest, client_id: str = "d
         # Initialize config
         global config
         if config is None:
-            config = get_config("config/base_config.yaml")
+            config = get_config(BASE_CONFIG_PATH)
 
         # 【关键修复】确保 LLM API Key 存在，否则这里就会抛出 500
         ensure_llm_scope_config("kg")
@@ -606,7 +645,7 @@ async def construct_graph(request: GraphConstructionRequest, client_id: str = "d
 
         await send_progress_update(client_id, "construction", 95, "Preparing visualization data...")
         # Load constructed graph for visualization
-        graph_path = f"output/graphs/{dataset_name}_new.json"
+        graph_path = dataset_graph_path(dataset_name)
         graph_vis_data = await prepare_graph_visualization(graph_path)
 
         await send_progress_update(client_id, "construction", 100, "Graph construction completed!")
@@ -859,17 +898,17 @@ async def ask_question(request: QuestionRequest, client_id: str = "default"):
 
         await send_progress_update(client_id, "retrieval", 10, "Initializing retrieval system (agent mode)...")
 
-        graph_path = f"output/graphs/{dataset_name}_new.json"
+        graph_path = dataset_graph_path(dataset_name)
         schema_path = get_schema_path_for_dataset(dataset_name)
         if not os.path.exists(graph_path):
-            graph_path = "output/graphs/demo_new.json"
+            graph_path = DEMO_GRAPH_PATH
         if not os.path.exists(graph_path):
             raise HTTPException(status_code=404, detail="Graph not found. Please construct graph first.")
 
         # Config & components
         global config
         if config is None:
-            config = get_config("config/base_config.yaml")
+            config = get_config(BASE_CONFIG_PATH)
 
         ensure_llm_scope_config("rag")
 
@@ -1485,27 +1524,33 @@ async def get_datasets():
     datasets = []
 
     # Check uploaded datasets
-    upload_dir = "data/uploaded"
+    upload_dir = str(UPLOADED_DATA_DIR)
     if os.path.exists(upload_dir):
         for item in os.listdir(upload_dir):
             item_path = os.path.join(upload_dir, item)
             if os.path.isdir(item_path):
                 corpus_path = os.path.join(item_path, "corpus.json")
                 if os.path.exists(corpus_path):
-                    graph_path = f"output/graphs/{item}_new.json"
+                    graph_path = dataset_graph_path(item)
                     status = "ready" if os.path.exists(graph_path) else "needs_construction"
-                    has_custom_schema = os.path.exists(f"schemas/{item}.json")
+                    has_custom_schema = os.path.exists(dataset_schema_path(item))
                     datasets.append({
                         "name": item,
                         "type": "uploaded",
                         "status": status,
                         "has_custom_schema": has_custom_schema
                     })
+                else:
+                    logger.warning(
+                        "Skipping uploaded dataset '%s' because corpus.json is missing in %s",
+                        item,
+                        item_path,
+                    )
 
     # Add demo dataset
-    demo_corpus = "data/demo/demo_corpus.json"
+    demo_corpus = DEMO_CORPUS_PATH
     if os.path.exists(demo_corpus):
-        demo_graph = "output/graphs/demo_new.json"
+        demo_graph = DEMO_GRAPH_PATH
         status = "ready" if os.path.exists(demo_graph) else "needs_construction"
         datasets.append({
             "name": "demo",
@@ -1535,8 +1580,8 @@ async def upload_schema(dataset_name: str, schema_file: UploadFile = File(...)):
         if not isinstance(data, dict):
             raise HTTPException(status_code=400, detail="Schema JSON must be an object")
 
-        os.makedirs("schemas", exist_ok=True)
-        save_path = f"schemas/{dataset_name}.json"
+        os.makedirs(SCHEMAS_DIR, exist_ok=True)
+        save_path = dataset_schema_path(dataset_name)
         with open(save_path, 'w', encoding='utf-8') as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
 
@@ -1557,33 +1602,33 @@ async def delete_dataset(dataset_name: str):
         deleted_files = []
 
         # Delete dataset directory
-        dataset_dir = f"data/uploaded/{dataset_name}"
+        dataset_dir = uploaded_dataset_dir(dataset_name)
         if os.path.exists(dataset_dir):
             import shutil
             shutil.rmtree(dataset_dir)
             deleted_files.append(dataset_dir)
 
         # Delete graph file
-        graph_path = f"output/graphs/{dataset_name}_new.json"
+        graph_path = dataset_graph_path(dataset_name)
         if os.path.exists(graph_path):
             os.remove(graph_path)
             deleted_files.append(graph_path)
 
         # Delete schema file (if dataset-specific)
-        schema_path = f"schemas/{dataset_name}.json"
+        schema_path = dataset_schema_path(dataset_name)
         if os.path.exists(schema_path):
             os.remove(schema_path)
             deleted_files.append(schema_path)
 
         # Delete cache files
-        cache_dir = f"retriever/faiss_cache_new/{dataset_name}"
+        cache_dir = str(FAISS_CACHE_ROOT / dataset_name)
         if os.path.exists(cache_dir):
             import shutil
             shutil.rmtree(cache_dir)
             deleted_files.append(cache_dir)
 
         # Delete chunk files
-        chunk_file = f"output/chunks/{dataset_name}.txt"
+        chunk_file = dataset_chunk_path(dataset_name)
         if os.path.exists(chunk_file):
             os.remove(chunk_file)
             deleted_files.append(chunk_file)
@@ -1606,23 +1651,23 @@ async def reconstruct_dataset(dataset_name: str, client_id: str = "default"):
             raise HTTPException(status_code=503,
                                 detail="GraphRAG components not available. Please install or configure them.")
         # Check if dataset exists
-        corpus_path = f"data/uploaded/{dataset_name}/corpus.json"
+        corpus_path = dataset_corpus_path(dataset_name)
         if not os.path.exists(corpus_path):
             if dataset_name == "demo":
-                corpus_path = "data/demo/demo_corpus.json"
+                corpus_path = DEMO_CORPUS_PATH
             else:
                 raise HTTPException(status_code=404, detail="Dataset not found")
 
         await send_progress_update(client_id, "reconstruction", 5, "Starting reconstruction...")
 
         # Delete existing graph file
-        graph_path = f"output/graphs/{dataset_name}_new.json"
+        graph_path = dataset_graph_path(dataset_name)
         if os.path.exists(graph_path):
             os.remove(graph_path)
             await send_progress_update(client_id, "reconstruction", 15, "Old graph file deleted...")
 
         # Delete existing cache files
-        cache_dir = f"retriever/faiss_cache_new/{dataset_name}"
+        cache_dir = str(FAISS_CACHE_ROOT / dataset_name)
         if os.path.exists(cache_dir):
             import shutil
             shutil.rmtree(cache_dir)
@@ -1633,7 +1678,7 @@ async def reconstruct_dataset(dataset_name: str, client_id: str = "default"):
         # Initialize config
         global config
         if config is None:
-            config = get_config("config/base_config.yaml")
+            config = get_config(BASE_CONFIG_PATH)
 
         ensure_llm_scope_config("kg")
 
@@ -1695,7 +1740,7 @@ async def reconstruct_dataset(dataset_name: str, client_id: str = "default"):
 @app.get("/api/graph/{dataset_name}")
 async def get_graph_data(dataset_name: str):
     """Get graph visualization data"""
-    graph_path = f"output/graphs/{dataset_name}_new.json"
+    graph_path = dataset_graph_path(dataset_name)
 
     if not os.path.exists(graph_path):
         # Return demo data
@@ -1720,10 +1765,12 @@ async def get_graph_data(dataset_name: str):
 @app.on_event("startup")
 async def startup_event():
     """Initialize on startup"""
-    os.makedirs("data/uploaded", exist_ok=True)
-    os.makedirs("output/graphs", exist_ok=True)
-    os.makedirs("output/logs", exist_ok=True)
-    os.makedirs("schemas", exist_ok=True)
+    os.makedirs(UPLOADED_DATA_DIR, exist_ok=True)
+    os.makedirs(OUTPUT_GRAPHS_DIR, exist_ok=True)
+    os.makedirs(OUTPUT_CHUNKS_DIR, exist_ok=True)
+    os.makedirs(OUTPUT_LOGS_DIR, exist_ok=True)
+    os.makedirs(SCHEMAS_DIR, exist_ok=True)
+    os.makedirs(FAISS_CACHE_ROOT, exist_ok=True)
 
     logger.info("Youtu-GraphRAG Unified Interface initialized")
 

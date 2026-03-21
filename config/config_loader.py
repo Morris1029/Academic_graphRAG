@@ -10,6 +10,7 @@ from typing import Any, Dict, Optional
 import yaml
 
 from utils.logger import logger
+from utils.paths import resolve_repo_path
 
 
 @dataclass
@@ -165,7 +166,7 @@ class ConfigManager:
         Args:
             config_path: Path to the configuration file. If None, uses default.
         """
-        self.config_path = config_path or self._get_default_config_path()
+        self.config_path = resolve_repo_path(config_path) if config_path else self._get_default_config_path()
         self.config_data: Dict[str, Any] = {}
         self.datasets: Dict[str, DatasetConfig] = {}
         self.triggers: Optional[TriggersConfig] = None
@@ -211,7 +212,7 @@ class ConfigManager:
         self.active_dataset = self.config_data.get("active_dataset", "demo")
         datasets_data = self.config_data.get("datasets", {})
         self.datasets = {
-            name: DatasetConfig(**config) 
+            name: DatasetConfig(**self._normalize_dataset_paths(config))
             for name, config in datasets_data.items()
         }
         
@@ -221,12 +222,14 @@ class ConfigManager:
         construction_data = self.config_data.get("construction", {})
         tree_comm_data = construction_data.pop("tree_comm", {})
         self.construction = ConstructionConfig(**construction_data)
+        self.construction.extraction_cache_dir = resolve_repo_path(self.construction.extraction_cache_dir)
         self.tree_comm = TreeCommConfig(**tree_comm_data)
         
         retrieval_data = self.config_data.get("retrieval", {})
         faiss_data = retrieval_data.pop("faiss", {})
         agent_data = retrieval_data.pop("agent", {})
         self.retrieval = RetrievalConfig(**retrieval_data)
+        self.retrieval.cache_dir = resolve_repo_path(self.retrieval.cache_dir)
         self.retrieval.faiss = FAISSConfig(**faiss_data)
         self.retrieval.agent = AgentConfig(**agent_data)
         
@@ -240,12 +243,25 @@ class ConfigManager:
         
         output_data = self.config_data.get("output", {})
         self.output = OutputConfig(**output_data)
+        self.output.base_dir = resolve_repo_path(self.output.base_dir)
+        self.output.graphs_dir = resolve_repo_path(self.output.graphs_dir)
+        self.output.chunks_dir = resolve_repo_path(self.output.chunks_dir)
+        self.output.logs_dir = resolve_repo_path(self.output.logs_dir)
         
         performance_data = self.config_data.get("performance", {})
         self.performance = PerformanceConfig(**performance_data)
         
         evaluation_data = self.config_data.get("evaluation", {})
         self.evaluation = EvaluationConfig(**evaluation_data)
+
+    @staticmethod
+    def _normalize_dataset_paths(config: Dict[str, Any]) -> Dict[str, Any]:
+        """Normalize dataset filesystem paths so they do not depend on cwd."""
+        normalized = dict(config)
+        for key in ("corpus_path", "qa_path", "schema_path", "graph_output"):
+            if key in normalized and normalized[key]:
+                normalized[key] = resolve_repo_path(normalized[key])
+        return normalized
     
     def _validate_config(self) -> None:
         """Validate the loaded configuration."""

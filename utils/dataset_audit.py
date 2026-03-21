@@ -5,6 +5,8 @@ import re
 from collections import Counter
 from typing import Any, Dict, Iterable, List, Optional
 
+from utils.paths import repo_str
+
 
 PAPER_SCHEMA_TYPE = "\u8bba\u6587"
 CHUNK_AUDIT_SUFFIX = "_chunk_audit.jsonl"
@@ -55,13 +57,13 @@ def build_document_uid(doc: Dict[str, Any], duplicate_doc_ids: Optional[Iterable
 
 
 def get_dataset_paths(dataset_name: str) -> Dict[str, str]:
-    base_uploaded = os.path.join("data", "uploaded", dataset_name)
+    base_uploaded = repo_str("data", "uploaded", dataset_name)
     return {
         "corpus": os.path.join(base_uploaded, "corpus.json"),
-        "chunk_text": os.path.join("output", "chunks", f"{dataset_name}.txt"),
-        "chunk_audit": os.path.join("output", "chunks", f"{dataset_name}{CHUNK_AUDIT_SUFFIX}"),
-        "graph": os.path.join("output", "graphs", f"{dataset_name}_new.json"),
-        "stats": os.path.join("output", "graphs", f"{dataset_name}_construction_stats.json"),
+        "chunk_text": repo_str("output", "chunks", f"{dataset_name}.txt"),
+        "chunk_audit": repo_str("output", "chunks", f"{dataset_name}{CHUNK_AUDIT_SUFFIX}"),
+        "graph": repo_str("output", "graphs", f"{dataset_name}_new.json"),
+        "stats": repo_str("output", "graphs", f"{dataset_name}_construction_stats.json"),
     }
 
 
