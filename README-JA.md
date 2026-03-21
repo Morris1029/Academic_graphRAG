@@ -1,254 +1,309 @@
-<div align="center">
+# グラフ検索拡張生成に基づく学際的知識発見研究
 
-#  <img src="assets/logo.svg" alt="Youtu-agent Logo" height="26px"> Youtu-GraphRAG：垂直統合型のグラフ強化による複雑推論の新パラダイム
+日本語版ドキュメントです。内容は `README.md` と同じ方針で、現在の研究実装版に合わせて整理しています。
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Documentation](https://img.shields.io/badge/Paper-Latest-blue.svg)](Youtu-GraphRAG.pdf)
-[![WeChat Community](https://img.shields.io/badge/Community-WeChat-32CD32)](assets/wechat_qr.png)
-[![Discord](https://img.shields.io/badge/Community-Discord-8A2BE2)](https://discord.gg/QjqhkHQVVM)
-<a href=https://deepwiki.com/TencentCloudADP/youtu-graphrag><img src=https://img.shields.io/badge/DeepWiki-Tencent-blue.svg></a>
-[![GitHub stars](https://img.shields.io/github/stars/TencentCloudADP/youtu-graphrag?style=social)](https://github.com/TencentCloudADP/youtu-graphrag)
+## プロジェクト概要
+本プロジェクトは、学際的知識発見を目的とした GraphRAG 研究プロトタイプです。論文「基于图检索增强生成的跨学科知识发现研究」に沿って実装されており、科学文献を対象に、以下の一連の処理を統合しています。
 
-*🚀 図形検索における推論パラダイムを再定義し、トークンコストを33.6%削減し、精度を16.62%向上させることでパレート改善を実現*
+- 大規模言語モデルによる知識抽出
+- 知識グラフ構築
+- グラフ検索拡張 QA
+- 評価と分析
 
-[🔖 English](README.md) • [🔖 中国語](README-CN.md) • [⭐ 核心贡献与创新](#contribution) • [📊 基准测试](https://huggingface.co/datasets/Youtu-Graph/AnonyRAG) • [🚀 快速开始](#quickstart)
+非構造化な学術文献から潜在的な学際的関連を発見し、研究支援に活用することを目的としています。
 
-</div>
+現在の実装は、汎用 GraphRAG フレームワークの紹介ではなく、次の研究課題に焦点を当てています。
 
-## 🎯 プロジェクト紹介  
-**Youtu-GraphRAG**は、グラフスキーマに基づいて垂直統合された推論パラダイムであり、GraphRAGフレームワークをエージェントを中心とした有機的な全体として巧みに統合しています。グラフスキーマ上での人為的介入を最小限に抑えつつ、異分野間でのシームレスな移行を実現し、業界向けに汎用性が高く、堅牢で実用的な次世代のGraphRAGパラダイムを提供します。
+- 学際的な科学文献に対する構造化知識グラフの構築
+- グラフに基づく複雑な質問の検索、分解、推論
+- AIGC / 大規模言語モデルの教育応用文献を中心とした実験
+- 知識グラフ構築評価と QA 評価の二系統の実験基盤
+- Web プロトタイプによるアップロード、構築、可視化、QA
 
-<img src="assets/logo.png" alt="Youtu-GrapHRAG Logo" width="90" align="left" style="margin-right:20px;">
+## 研究上の位置づけ
+本プロジェクトは、一般的なチャットボットではなく、「学際的な科学知識の発見」を主題としています。中核となる研究課題は次のとおりです。
 
-### 🎨 Youtu-GraphRAGの三大応用シナリオ  
+1. 文献メタデータに基づいて学際的な科学知識グラフを自動構築するにはどうすればよいか。
+2. GraphRAG を用いて、学際的知識発見の効率、網羅性、説明可能性をどう高めるか。
+3. 知識グラフ構築品質と QA 品質をどう評価し、異なるモデルをどう比較するか。
 
-🔗 **多段階推論と要約**：複数の推論ステップが必要な複雑な問題の解決  
-📚 **知識集約型タスク**：大量の構造化された知識に依存する問題の処理  
-🌐 **クロスドメイン拡張**：学術論文、個人知識ベース、企業内知識ベースなど、さまざまな分野に容易に対応可能。スキーマ設定における人的介入を最小限に抑える
+現在の主要サンプルは「大規模言語モデルの教育分野への応用研究」であり、リポジトリ内には `AIGC-EDU` や `AIGC-EDU-test` などのデータセットが含まれています。
 
-## 🏗️ フレームワークアーキテクチャ
+## 現在のシステム機能
 
-<div align="center">
-<img src="assets/framework.png" alt="Youtu-GraphRAG フレームワークアーキテクチャ図" width="95%"><br>
-Youtu-GraphRAG フレームワーク概要
-</div>
+### 1. 文献アップロードとデータセット管理
+- Web UI から `.txt`、`.md`、`.json`、`.pdf`、`.docx`、`.doc` をアップロード可能
+- `data/uploaded/<dataset_name>/corpus.json` を自動生成
+- データセット一覧、削除、再構築、カスタム schema のアップロードに対応
+- `demo` データセットを同梱
 
-## 📲 インタラクティブなインターフェース
+### 2. 知識グラフ構築
+- 主な入口は `main.py` と `backend.py`
+- 中核モジュールは `models/constructor/kt_gen.py`
+- schema に基づくエンティティ・関係・属性抽出
+- 文書横断リンク、コミュニティ検出、chunk 監査、グラフ出力
+- 出力先は `output/graphs/`、`output/chunks/`、`output/logs/`
 
-Youtu-GraphRAGの主な特徴については、[デモビデオ](https://youtu.be/fVUsgClHqwc)もご覧いただけます。
-<div align="center">
-<img src="assets/graph_demo.png" alt="Graph Construction" width="45.9%"/>
-<img src="assets/retrieval_demo.png" alt="Retrieval" width="49.4%"/>
-</div>
+### 3. グラフ検索拡張 QA
+- `agent` と `noagent` の 2 モードをサポート
+- `agent` モードでは質問分解、サブ質問処理、反復検索、推論を実行
+- 検索はグラフ、FAISS、chunk 証拠を組み合わせて実施
+- グラフ可視化、推論過程表示、検索結果表示に対応
 
-<a id="contribution"></a>
+### 4. 評価と実験
+- `eval/kg_eval/`：知識グラフ構築品質評価
+- `eval/rag_eval/`：QA 品質評価
+- `eval/utils/sample_kg_eval_stratified.py`：層化ランダムサンプリング
+- gold 生成、候補モデル比較、文書横断レビュー用テンプレート出力、Markdown レポート生成
 
-## 🚀 コア貢献とイノベーションのハイライト  
-統一されたグラフ検索に基づく生成エージェントパラダイムに基づき、Youtu-GraphRAGは複数の重要なイノベーションを導入しており、これらのイノベーションが一体となって精密で統合された完全なフレームワークを構築しています。  
+## 技術ルートと実装の対応
 
-<summary><strong>🏗️ 1. スキーマによる階層的な知識ツリーの構築</strong></summary>
+| 研究テーマ | 実装 |
+| --- | --- |
+| 科学文献知識抽出と意味統合 | `models/constructor/kt_gen.py`、`utils/document_parser.py`、`schemas/` |
+| GraphRAG による学際的 QA | `models/retriever/agentic_decomposer.py`、`models/retriever/enhanced_kt_retriever.py`、`backend.py` |
+| 評価体系とモデル比較 | `eval/kg_eval/`、`eval/rag_eval/`、`test_kg_eval.py` |
 
-- 🌱 **シードグラフスキーマ**：ターゲットを絞ったエンティティタイプ、関係タイプ、属性タイプを導入することで、自動抽出処理に精密な制約を与える。  
-- 📈 **スキーマの動的な拡張性**：スキーマを動的に拡張できるため、異分野間の知識の自律的な進化と高品質な抽出が実現される。  
-- 🏢 **4層構造の設計**：  
-  - **第1層（属性層）**：エンティティの属性情報を格納する。  
-  - **第2層（関係層**：エンティティ間の関係を表すトリプルを構築する。  
-  - **第3層（キーワード層**：キーワードのインデックスシステムを確立する。  
-  - **第4層（コミュニティ層**：階層的なコミュニティ構造を形成する。  
-- ⚡ **業界応用への迅速な適応**：人為的な介入を最小限に抑えつつ、異分野間での迅速な導入が可能。
+## プロジェクト構成
 
-<summary><strong>🌳 2. 構造・意味の二重認識に基づくコミュニティ検出</strong></summary>
-
-- 🔬 **革新的なコミュニティ検出アルゴリズムの設計**：構造的なトポロジー特性とサブグラフの意味情報を巧みに統合し、包括的な知識組織体系を構築。複雑なネットワークから高次元の知識を抽出し、推論・要約能力を強化する。コミュニティ生成の効果は、従来のLeidenやLouvainアルゴリズムを大きく上回る。  
-- 📊 **階層化された知識ツリー**：自然に生成されるこの構造は、トップダウン型のフィルタリングおよびボトムアップ型の推論の両方をサポートする。  
-- 📝 **インテリジェントなコミュニティ要約**：大規模言語モデルを活用してコミュニティの要約生成を強化し、より高次元の知識抽象化を実現する。  
-
-<div align="center">  
-<img src="assets/comm.png" alt="Youtu-GraphRAG Community Detection" width="60%"/>  
-</div>  
-
-<summary><strong>🤖 3. インテリジェントな反復検索</strong></summary>  
-- 🎯 **スキーマ認識に基づく複雑な問題の分解**：グラフのスキーマ構造を深く理解し、複雑なクエリを並列処理可能なサブクエリに効率的に変換する。  
-- 🔄 **反復的な推論メカニズム**：反復的な検索プロセスを通じてさらに深い推論を実現し、推論能力を大幅に向上させる。  
-
-<div align="center">  
-<img src="assets/agent.png" alt="Youtu-GraphRAG Agentic Decomposer" width="50%"/>  
-</div>
-
-<summary><strong>🧠 4. 業界トップクラスの実用レベルでの構築、インデックス作成・推論能力、そしてユーザーフレンドリーな体験</strong></summary>
-
-- 🎯 **性能の包括的な最適化**：入念に設計されたプロンプト戦略、インデックスメカニズム、検索アルゴリズムにより、トークン消費量を削減しつつ回答精度を向上させる  
-- 🤹‍♀️ **ユーザーフレンドリーな体験**：4層構造の知識ツリーによりNeo4jデータを直接インポートして可視化でき、知識の帰納や推論過程がユーザーに直感的に表示される  
-- ⚡ **並列処理**：分解された問題を並列処理することで、複雑なシナリオでも高い効率を維持  
-- 🤔 **段階的な推論プロセス**：答えを段階的に構築し、明確な推論経路を提示することで結果の説明可能性を高める  
-- 📊 **エンタープライズ向けの拡張性**：プライベート環境や企業向けに設計されており、新規分野への導入時の人的介入を最小限に抑える  
-
-<summary><strong>📈 5. 公正かつ匿名性の高いデータセット「AnonyRAG」</strong></summary>
-
-- リンク: [Hugging Face AnonyRAG](https://huggingface.co/datasets/Youtu-Graph/AnonyRAG)  
-- **大規模言語モデルの事前学習における知識漏洩リスクの効果的な防止**  
-- **実環境におけるGraphRAGの検索性能の評価**  
-- **中国語・英語のバイリンガル版を提供し、多言語研究をサポート  
-
-<summary><strong>⚙️ 6. 統一された設定管理</strong></summary>
-
-- 🎛️ **パラメータの集中管理**：すべてのコンポーネントを単一のYAMLファイルで一元的に設定可能  
-- 🔧 **実行時の動的調整**：プログラム実行中に設定パラメータを動的に変更できる  
-- 🌍 **多様な環境へのシームレスな対応**：人為的な介入を最小限に抑えながら異なる環境間でのシームレスな移行を実現  
-- 🔄 **完全な後方互換性**：フレームワークのアップグレード後も既存コードの正常な動作を保証  
-
-## 📊 実験結果  
-GraphRAG-Bench、HotpotQA、MuSiQueなど6つのベンチマークデータセットを用いた広範な実験により、Youtu-GraphRAGのエンタープライズ向けの拡張性および汎化能力が十分に証明された。最先端の手法と比較して、最大で**33.6%のトークン消費量削減**および**16.62%の精度向上**を実現。実験結果は、スキーマ設定への人為的介入を最小限に抑えつつ異分野間でのシームレスな適用が可能であることを示している。
-
-- 🔧 **运行时动态调整**：支持在程序执行过程中动态修改配置参数
-- 🌍 **多环境无缝支持**：在图 Schema 最小人为干预的前提下，轻松实现跨领域迁移
-- 🔄 **完善向后兼容**：确保现有代码在框架升级后仍能正常运行
-
-## 📊 実験結果
-
-GraphRAG-Bench、HotpotQA、MuSiQueなど6つの専門的かつクロスドメイン対応の多言語ベンチマークデータセットを用いた広範な実験を通じて、Youtu-GraphRAGのエンタープライズレベルでの拡張性および汎化能力が十分に実証されました。最先端のベースライン手法と比較して、Youtu-GraphRAGは顕著な性能向上を達成し、<strong>トークンコストの削減率33.6%</strong>および<strong>精度の向上率16.62%</strong>を実現しました。実験結果は、スキーマへの介入を最小限に抑えつつ異分野間でのシームレスな移行が可能である本フレームワークの優れた汎化能力を如実に示しています。
-
-<div align="center">
-<img src="assets/performance.png" alt="Cost/acc performance" width="90%"/>
-<img src="assets/pareto.png" alt="Moving Pareto Frontier" width="54%"/>
-<img src="assets/radar.png" alt="radar comparison" width="36%"/>
-</div>
-
-## 📁 プロジェクト構造
-
-```bash
+```text
 youtu-graphrag/
-├── 📁 config/                     # 設定システム
-│   ├── base_config.yaml           # メイン設定ファイル
-│   ├── config_loader.py           | 設定読み込みモジュール
-│   └── __init__.py                | 設定モジュールのインターフェース
-│
-├── 📁 data/                       | データディレクトリ
-│
-├── 📁 models/                     | コアモデルモジュール
-│   ├── constructor/            | 知識グラフ構築モジュール
-│   │   └── kt_gen.py              | KTBuilder（階層化グラフ構築ツール）
-│   ├── retriever/              | 検索モジュール
-│   │   ├── enhanced_kt_retriever.py     | KTRetriever（主要な検索エンジン）
-│   │   ├── agentic_decomposer.py     | 複雑なクエリの処理モジュール
-│   └── faiss_filter.py           | DualFAISSRetriever（FAISSを用いた検索エンジン）
-│
-├── 📁 utils/                      | ユーティリティモジュール
-│   ├── tree_comm.py               | ネットワーク構造検出アルゴリズム
-│   ├── call_llm_api.py            | 大規模言語モデル（LLM）API呼び出しモジュール
-│   ├── eval.py                    | 評価ツール
-│   └── graph_processor.py         | グラフ処理ツール
-│
-├── 📁 schemas/                    | シェーマ（データ構造の定義）
-├── 📁 assets/                     | 静的リソース（画像、チャートなど）
-│
-├── 📁 output/                     | 出力ディレクトリ
-│   ├── graphs/                    | 構築済みの知識グラフ
-│   ├── chunks/                    | テキストデータのブロック情報
-│   └── logs/                      | 実行ログ
-├── retriever/                  | 検索キャッシュモジュール
-│
-├── main.py                       | メインプログラム（実行ファイル）
-├── setup_env.sh                  | Webサービス用依存ライブラリのインストールスクリプト
-│── start.sh                      | Webサービスの起動スクリプト
-│── requirements.txt              | 依存パッケージ一覧
-└── README.md                     | プロジェクトドキュメント
+├─ backend.py                  # FastAPI バックエンド
+├─ main.py                     # CLI エントリポイント
+├─ config/
+│  ├─ base_config.yaml         # メイン設定
+│  └─ config_loader.py         # 設定読み込みとパス正規化
+├─ frontend/
+│  ├─ index_new.html           # フロントエンド画面
+│  ├─ script.js                # UI ロジック
+│  └─ style.css                # スタイル
+├─ models/
+│  ├─ constructor/
+│  │  └─ kt_gen.py             # 知識グラフ構築コア
+│  └─ retriever/
+│     ├─ agentic_decomposer.py # 質問分解
+│     ├─ enhanced_kt_retriever.py
+│     └─ faiss_filter.py       # FAISS 検索
+├─ utils/
+│  ├─ document_parser.py       # 文書解析
+│  ├─ call_llm_api.py          # LLM 呼び出し
+│  ├─ dataset_audit.py         # データセット監査
+│  ├─ tree_comm.py             # コミュニティ関連
+│  └─ paths.py                 # リポジトリルート基準のパス解決
+├─ data/
+│  ├─ demo/
+│  └─ uploaded/
+├─ schemas/
+├─ output/
+│  ├─ graphs/
+│  ├─ chunks/
+│  └─ logs/
+├─ eval/
+│  ├─ kg_eval/
+│  ├─ rag_eval/
+│  ├─ utils/
+│  └─ results/
+├─ test_kg_eval.py
+└─ test_sample_kg_eval_stratified.py
 ```
 
-<a id="quickstart"></a>
+## 動作環境
+- Python 3.10 以上
+- 仮想環境の利用を推奨
+- CPU でも動作可能
+- 文書解析互換性向上のため Java ランタイムを推奨
 
-## 🚀 クイックスタート  
-サンプルサービスを実行して体験するための方法として、Dockerおよびソースコードからのデプロイの2つの方法を用意しています。基盤環境の違いによる影響を考慮すると、**Docker**環境を使用して起動することをお勧めします。  
+主な依存関係は次のファイルを参照してください。
 
-### 💻 Dockerを使用して起動する  
-この起動方法はDocker環境に依存するため、[公式ドキュメント](https://docs.docker.com/get-started/)を参照してローカルにDocker環境をインストールしてください。  
+- `requirements.txt`
+- `requirements-server.txt`
+- `requirements-optional.txt`
+
+## LLM 環境変数
+タスクごとにモデル設定を分離できます。
+
+### 共通デフォルト設定
+```env
+LLM_MODEL=deepseek-chat
+LLM_BASE_URL=https://api.deepseek.com
+LLM_API_KEY=your_key
+```
+
+### 構築と QA を分ける場合
+```env
+KG_LLM_MODEL=qwen3-max
+KG_LLM_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+KG_LLM_API_KEY=your_key
+
+RAG_LLM_MODEL=deepseek-chat
+RAG_LLM_BASE_URL=https://api.deepseek.com
+RAG_LLM_API_KEY=your_key
+```
+
+Azure OpenAI を使う場合は次も設定できます。
+
+```env
+OPENAI_PROVIDER=azure
+API_VERSION=2025-01-01-preview
+```
+
+評価モジュールは別の環境ファイルを使います。
+
+- `eval/.env`
+- `eval/rag_eval/.env`
+
+## クイックスタート
+
+### 1. 依存関係のインストール
+```bash
+pip install -r requirements.txt
+```
+
+中国語テキストを扱う場合は spaCy の中国語モデルを推奨します。
 
 ```bash
-# 1. プロジェクトをクローンする  
-git clone https://github.com/TencentCloudADP/youtu-graphrag  
-
-# 2. `.env`ファイルを作成する  
-cd youtu-graphrag && cp.env.example.env  
-# `.env`ファイルにOpenAI API形式に準拠したLLM APIを以下の形式で設定する：  
-# LLM_MODEL=deepseek-chat  
-# LLM_BASE_URL=https://api.deepseek.com  
-# LLM_API_KEY=sk-xxxxxx  
-
-# 3. Dockerfileを使用してイメージをビルドする  
-docker build -t youtu-graphrag:v1.  
-
-# 4. Dockerコンテナを起動する  
-docker run -d -p 8000:8000 youtu-graphrag:v1  
-
-# 5. http://localhost:8000にアクセスしてYoutu-GraphRAGを体験する  
-curl -v http://localhost:8000  
+python -m spacy download zh_core_web_lg
 ```
 
-### 💻 Webサービスを直接起動してインタラクティブなインターフェースを体験する
+### 2. 環境変数の設定
+ルートディレクトリの `.env.example` を参考にしてください。
 
-この起動方法はPython 3.10および対応するpip環境に依存します。インストールについては、[公式ドキュメント](https://docs.python.org/3.10/using/index.html)を参照することをお勧めします。
+### 3. Web プロトタイプの起動
+```bash
+python backend.py
+```
+
+起動後に以下へアクセスします。
+
+```text
+http://localhost:8000
+```
+
+### 4. CLI で構築 / 検索を実行
+```bash
+python main.py --config config/base_config.yaml --datasets demo
+```
+
+特定の処理だけ実行したい場合は `--override` を使います。
 
 ```bash
-# 1. プロジェクトをクローンする
-git clone https://github.com/TencentCloudADP/youtu-graphrag
-
-# 2..envファイルを作成する
-cd youtu-graphrag && touch.env
-#.envファイルにOpenAI API形式のLLM APIを以下のように設定する：
-# LLM_MODEL=deepseek-chat
-# LLM_BASE_URL=https://api.deepseek.com
-# LLM_API_KEY=sk-xxxxxx
-
-# 3. 仮想環境を作成し、有効化する
-python -m venv venv
-source venv/bin/activate  # Linux/macOS
-
-# 4. 環境を初期化する
-./setup_env.sh
-
-# 5. サービスを起動する
-./start.sh
-
-# 6. http://localhost:8000にアクセスしてYoutu-GraphRAGを体験する
-curl -v http://localhost:8000  # サービスが正常に動作しているかを確認する
+python main.py --datasets demo --override "{\"triggers\": {\"constructor_trigger\": true, \"retrieve_trigger\": false}}"
 ```
 
-### 📖 完全な使用ガイド
-インストール、設定、使用方法の詳細については、[**🚀 完全ガイド**](FULLGUIDE.md)をご覧ください。  
+## Web 利用フロー
+現在のフロントエンドでは次の流れをサポートしています。
 
-## ⭐ **今すぐYoutu-GraphRAGを体験し、インテリジェントなQ&Aの新たな章を始めましょう！** 🚀  
+1. 文書をアップロードしてデータセットを作成
+2. 必要に応じてカスタム schema をアップロード
+3. 知識グラフを構築
+4. グラフを可視化
+5. データセットを選択して研究 QA を実行
+6. 既存データセットを再構築または削除
 
-## 🤝 貢献をお願いします
+主要 API は `backend.py` にあります。
 
-コミュニティからのあらゆる貢献を心から歓迎します！以下の方法で参加できます：  
+- `GET /api/datasets`
+- `POST /api/upload`
+- `POST /api/construct-graph`
+- `POST /api/ask-question`
+- `GET /api/graph/{dataset_name}`
+- `GET /api/dataset-audit/{dataset_name}`
 
-### 💻 コード貢献  
-1. このプロジェクトを自分のアカウントにフォークする  
-2. 新機能用のブランチを作成する（`git checkout -b feature/AmazingFeature`）  
-3. 変更内容をコミットする（`git commit -m '新機能を追加しました'`）  
-4. リモートブランチにプッシュする（`git push origin feature/AmazingFeature`）  
-5. プルリクエストを送信する  
+## 設定
+メイン設定ファイルは `config/base_config.yaml` です。現在の研究設定をよく表している主な項目は以下です。
 
-### 🔧 拡張開発ガイド  
-- **新しいシードスキーマの開発**：高品質なシードグラフスキーマの設計やデータ処理ロジックの貢献  
-- **カスタムデータセットの統合**：人の介入を最小限に抑えながら新しいデータセットを統合する  
-- **特定分野での応用**：その分野におけるベストプラクティスの事例を示す  
+- `active_dataset: demo`
+- `construction.mode: agent`
+- `nlp.spacy_model: zh_core_web_lg`
+- `datasets.demo` は `data/demo/` を参照
+- 出力は `output/` 以下に統一
 
-## 📞 お問い合わせ先  
-**董俊男** – hansonjdong@tencent.com  
-**安思宇** – siyuan@tencent.com  
+特に注目すべき設定群：
 
----
+- `construction.*`：構築、chunk 分割、文書横断リンク、並列数
+- `retrieval.*`：検索パラメータ、リコール経路、キャッシュ
+- `triggers.mode`：`agent` / `noagent`
+- `datasets.*`：コーパス、QA セット、schema、グラフ出力位置
 
-## 🎉 学術的引用
+## 評価フロー
 
-```bibtex
-@misc{dong2025youtugraphrag,
-      title={Youtu-GraphRAG: Vertically Unified Agents for Graph Retrieval-Augmented Complex Reasoning}, 
-      author={Junnan Dong and Siyu An and Yifei Yu and Qian-Wen Zhang and Linhao Luo and Xiao Huang and Yunsheng Wu and Di Yin and Xing Sun},
-      year={2025},
-      eprint={2508.19855},
-      archivePrefix={arXiv},
-      url={https://arxiv.org/abs/2508.19855}, 
-}
+### 1. 知識グラフ構築評価
+設定ファイル：
+
+- `eval/kg_eval/config.yaml`
+
+代表的なコマンド：
+
+```bash
+python -m eval.kg_eval.run generate_gold
+python -m eval.kg_eval.run run
+python -m eval.kg_eval.run cross_doc_review
 ```
+
+このモジュールでは次を行います。
+
+- gold アノテーション草稿生成
+- 候補抽出結果と gold の比較
+- グラフ構造と文書横断リンクの品質分析
+- 評価レポート生成
+
+### 2. QA 評価
+設定ファイル：
+
+- `eval/rag_eval/config.yaml`
+
+代表的なコマンド：
+
+```bash
+python -m eval.rag_eval.run
+python -m eval.rag_eval.run --dataset AIGC-EDU-test --qa-mode agent
+```
+
+このモジュールでは次を行います。
+
+- 質問セットの読み込み
+- 現在の GraphRAG パイプラインで回答生成
+- 精度、完全性、論理性、説明可能性、学際性などの観点で採点
+- 構造化結果と要約レポート生成
+
+## テスト
+現在含まれている基本テスト：
+
+```bash
+python test_kg_eval.py
+python test_sample_kg_eval_stratified.py
+```
+
+バックエンドと画面の基本確認だけなら次で十分です。
+
+```bash
+python backend.py
+```
+
+## 論文に近い理解のしかた
+このプロジェクトを一文で表すなら、次のように言えます。
+
+> 学際的な科学文献知識発見のための GraphRAG 実験プラットフォームであり、「学術テキストをグラフ化する」「グラフに基づいて QA する」「構築結果と QA 結果を評価する」という 3 つの問題を扱う。
+
+元の汎用 GraphRAG 紹介と比べて、現在のリポジトリは次をより重視しています。
+
+- 学術文献と学際的知識発見
+- 教育分野における大規模言語モデル研究サンプル
+- 評価の再現性
+- Web プロトタイプと実験ツールの統合
+
+## 関連ドキュメント
+- `README.md`：現在の主 README
+- `README-CN.md`：中国語版
+- `FULLGUIDE-CN.md`：中国語の詳細ガイド
+- `FULLGUIDE.md`：英語の詳細ガイド
+- `AGENTS.md`：開発エージェント向け作業指針
+
+## 補足
+- この README-JA は、現在の研究実装版に合わせて書き直したものです。
+- 今後公開や論文化を進める場合は、次の追記を推奨します。
+  - データソースの説明
+  - モデル選定理由
+  - 再現実験表
+  - 代表的な QA 事例
+  - 論文との対応関係
