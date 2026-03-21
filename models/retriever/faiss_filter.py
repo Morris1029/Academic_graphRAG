@@ -1233,9 +1233,18 @@ class DualFAISSRetriever:
             return ''
         return f"{name} - {description}" if description else name
     
-    def _get_community_members(self, community_node: str) -> tuple[list[str], list[str]]:
-        """Get entities and keywords that belong to a community."""
-        entities, keywords = [], []
+    def _get_level1_bucket(self, node_data: dict) -> str | None:
+        """Classify level-1 nodes by their actual graph label."""
+        label = str(node_data.get('label', '')).strip().lower()
+        if label == 'attribute':
+            return 'attributes'
+        if label == 'keyword':
+            return 'keywords'
+        return None
+
+    def _get_community_members(self, community_node: str) -> tuple[list[str], list[str], list[str]]:
+        """Get entities and attached level-1 nodes that belong to a community."""
+        entities, attributes, keywords = [], [], []
         
         for node_id, node_data in self.graph.nodes(data=True):
             if node_data.get('community_l4') == community_node:
@@ -1248,14 +1257,24 @@ class DualFAISSRetriever:
                 
                 if node_type == 2:  # Entity
                     entities.append(formatted_text)
-                elif node_type == 1:  # Keyword
-                    keywords.append(formatted_text)
+                elif node_type == 1:
+                    bucket = self._get_level1_bucket(node_data)
+                    if bucket == 'attributes':
+                        attributes.append(formatted_text)
+                    elif bucket == 'keywords':
+                        keywords.append(formatted_text)
         
-        return entities, keywords
-    
-    def _format_community_content(self, base_text: str, entities: list[str], keywords: list[str]) -> str:
-        """Format community with its member entities and keywords."""
-        if not entities and not keywords:
+        return entities, attributes, keywords
+
+    def _format_community_content(
+        self,
+        base_text: str,
+        entities: list[str],
+        attributes: list[str],
+        keywords: list[str],
+    ) -> str:
+        """Format community with its member entities and attached level-1 nodes."""
+        if not entities and not attributes and not keywords:
             return base_text
             
         content_parts = [base_text, "\n  Contains:"]
@@ -1266,6 +1285,13 @@ class DualFAISSRetriever:
             if len(entities) > 3:
                 entities_text += f" and {len(entities) - 3} more"
             content_parts.append(entities_text)
+
+        if attributes:
+            shown = attributes[:3]
+            attributes_text = f"\n    Attributes: {', '.join(shown)}"
+            if len(attributes) > 3:
+                attributes_text += f" and {len(attributes) - 3} more"
+            content_parts.append(attributes_text)
             
         if keywords:
             shown = keywords[:3]
@@ -1279,10 +1305,10 @@ class DualFAISSRetriever:
     def _nodes_to_text(self, nodes: List[str]) -> str:
         """Convert a list of nodes to a readable text format with node information."""
         # Node type mapping for cleaner code
-        NODE_TYPES = {1: 'keywords', 2: 'entities', 4: 'communities'}
+        NODE_TYPES = ('entities', 'attributes', 'keywords', 'communities')
         
         # Collect nodes by type
-        collected = {node_type: [] for node_type in NODE_TYPES.values()}
+        collected = {node_type: [] for node_type in NODE_TYPES}
         
         for node in nodes:
             if node not in self.graph.nodes:
@@ -1299,14 +1325,16 @@ class DualFAISSRetriever:
                 formatted = self._format_node_text(name, description)
                 collected['entities'].append(formatted)
                 
-            elif node_type == 1:  # Keyword
+            elif node_type == 1:
                 formatted = self._format_node_text(name, description)
-                collected['keywords'].append(formatted)
+                bucket = self._get_level1_bucket(node_data)
+                if bucket:
+                    collected[bucket].append(formatted)
                 
             elif node_type == 4:  # Community
                 base_text = self._format_node_text(name, description)
-                entities, keywords = self._get_community_members(node)
-                community_text = self._format_community_content(base_text, entities, keywords)
+                entities, attributes, keywords = self._get_community_members(node)
+                community_text = self._format_community_content(base_text, entities, attributes, keywords)
                 collected['communities'].append(community_text)
         
         # Build output sections
@@ -1314,6 +1342,7 @@ class DualFAISSRetriever:
         
         section_configs = [
             ('entities', '=== Entity Information ==='),
+            ('attributes', '=== Attribute Information ==='),
             ('keywords', '=== Keyword Information ==='),
             ('communities', '=== Community Information ===')
         ]

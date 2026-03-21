@@ -1622,31 +1622,13 @@ class KTBuilder:
         comm_to_nodes = _tree_comm.detect_communities(level2_nodes)
 
         # create super nodes (level 4 communities)
-        _tree_comm.create_super_nodes_with_keywords(comm_to_nodes, level=4)
-        # _tree_comm.add_keywords_to_level3(comm_to_nodes)
-        # connect keywords to communities (optional)
-        self._connect_keywords_to_communities()
+        _tree_comm.create_super_nodes(comm_to_nodes, level=4)
         end_comm = time.time()
         logger.info(f"Community Indexing Time: {end_comm - start_comm}s")
 
     def _connect_keywords_to_communities(self):
-        """Connect relevant keywords to communities"""
-        # comm_names = [self.graph.nodes[n]['properties']['name'] for n, d in self.graph.nodes(data=True) if d['level'] == 4]
-        comm_nodes = [n for n, d in self.graph.nodes(data=True) if d['level'] == 4]
-        kw_nodes = [n for n, d in self.graph.nodes(data=True) if d['label'] == 'keyword']
-        with self.lock:
-            for comm in comm_nodes:
-                comm_name = self.graph.nodes[comm]['properties']['name'].lower()
-                for kw in kw_nodes:
-                    kw_name = self.graph.nodes[kw]['properties']['name'].lower()
-                    if kw_name in comm_name or comm_name in kw_name:
-                        self._add_edge_with_metadata(
-                            kw,
-                            comm,
-                            "describes",
-                            relation_origin="derived",
-                            confidence=0.6,
-                        )
+        """Deprecated: keyword community nodes are no longer generated."""
+        return
 
     def _extract_chunk_with_parse_retry(self, chunk: Dict[str, Any], chunk_id: str) -> Dict[str, Any]:
         prompt = self._get_construction_prompt(chunk)

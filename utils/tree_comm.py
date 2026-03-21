@@ -678,43 +678,8 @@ class FastTreeComm:
         return self._build_fallback_community_name(context)
 
     def create_super_nodes_with_keywords(self, comm_to_nodes: Dict[str, List[str]], level: int = 4, batch_size: int = 5):
+        """Backward-compatible wrapper without schema-external keyword node creation."""
         super_nodes = self.create_super_nodes(comm_to_nodes, level, batch_size)
-        
-        keyword_mapping = {}
-        for comm_id, members in comm_to_nodes.items():
-            if len(members) < 2:
-                continue
-                
-            try:
-                keywords = self.extract_keywords_from_community(members)
-                super_node_id = f"comm_{level}_{comm_id}"
-                
-                for keyword in keywords:
-                    keyword_node_id = f"kw_{comm_id}_{keyword}"
-                    keyword_name = self.node_names[keyword]
-                    
-                    self.graph.add_node(
-                        keyword_node_id,
-                        label="keyword",
-                        level=3,
-                        properties={
-                            "name": keyword_name,
-                            "schema_type": "\u5173\u952e\u8bcd",
-                        }
-                    )
-                    
-                    self.graph.add_edge(keyword, keyword_node_id, relation="represented_by")
-                    self.graph.add_edge(keyword_node_id, super_node_id, relation="keyword_of")
-                    
-                    for member in members:
-                        if member == keyword:
-                            self.graph.add_edge(member, keyword_node_id, relation="kw_filter_by")
-                    
-                    keyword_mapping[keyword_node_id] = keyword
-                    
-            except Exception as e:
-                logger.error(f"Error creating keywords for community {comm_id}: {e}")
-        
-        return super_nodes, keyword_mapping
+        return super_nodes, {}
 
     
