@@ -485,6 +485,11 @@ class KTBuilder:
             "For the same technology concept, abbreviations, full names, and Chinese-English aliases "
             "must be unified to one entity name."
         )
+        prompt += (
+            "\n\n[Attribute formatting rule]\n"
+            "Keyword attributes must be split into separate items, for example: "
+            '["关键词: A", "关键词: B", "关键词: C"].'
+        )
         return prompt
 
         # base_prompt_type = prompt_type_map.get(self.dataset_name, "general")
@@ -809,6 +814,47 @@ class KTBuilder:
         except Exception as e:
             return None
 
+    def _split_keyword_attribute(self, attr_text: str) -> List[str]:
+        text = str(attr_text or "").strip()
+        if not text:
+            return []
+
+        match = re.match(r"^(关键词|关键字|keywords?)\s*[:：]\s*(.+)$", text, flags=re.IGNORECASE)
+        if not match:
+            return [text]
+
+        prefix = "关键词"
+        raw_values = str(match.group(2) or "").strip()
+        if not raw_values:
+            return [f"{prefix}: "]
+
+        parts = [
+            part.strip()
+            for part in re.split(r"[;；,，/、]+", raw_values)
+            if part and str(part).strip()
+        ]
+        if not parts:
+            return [f"{prefix}: {raw_values}"]
+        return [f"{prefix}: {part}" for part in parts]
+
+    def _normalize_attribute_values(self, attributes: Any) -> List[str]:
+        normalized: List[str] = []
+        seen: Set[str] = set()
+
+        if not isinstance(attributes, list):
+            attributes = [attributes] if attributes is not None else []
+
+        for attr in attributes:
+            safe_attr = str(attr) if isinstance(attr, dict) else str(attr or "")
+            for normalized_attr in self._split_keyword_attribute(safe_attr):
+                clean_attr = re.sub(r"\s+", " ", str(normalized_attr or "")).strip()
+                if not clean_attr or clean_attr in seen:
+                    continue
+                seen.add(clean_attr)
+                normalized.append(clean_attr)
+
+        return normalized
+
     def _process_attributes(self, extracted_attr: dict, chunk_id: int, entity_types: dict = None) -> tuple[list, list]:
         """Process extracted attributes and return nodes and edges to add."""
         nodes_to_add = []
@@ -817,7 +863,8 @@ class KTBuilder:
         for entity, attributes in extracted_attr.items():
             if self._should_skip_entity_name(entity):
                 continue
-            for attr in attributes:
+            normalized_attributes = self._normalize_attribute_values(attributes)
+            for attr in normalized_attributes:
                 # Create attribute node
                 attr_node_id = f"attr_{self.node_counter}"
                 nodes_to_add.append((
@@ -918,27 +965,25 @@ class KTBuilder:
                     continue
                 entity_type = self._canonicalize_entity_type(entity_types.get(entity), entity)
                 entity_id = self._find_or_create_entity_direct(entity, chunk_id, entity_type)
-
-                if isinstance(attrs, list):
-                    for attr in attrs:
-                        safe_attr = str(attr) if isinstance(attr, dict) else attr
-                        attr_id = f"attr_{self.node_counter}"
-                        self.graph.add_node(
-                            attr_id,
-                            label="attribute",
-                            properties={"name": safe_attr, "chunk_id": chunk_id},
-                            level=1,
-                        )
-                        self._add_edge_with_metadata(
-                            entity_id,
-                            attr_id,
-                            "has_attribute",
-                            relation_origin="doc_local",
-                            confidence=0.7,
-                            evidence_chunk_ids=[str(chunk_id)],
-                            source_paper_ids=[str(chunk_id)],
-                        )
-                        self.node_counter += 1
+                normalized_attributes = self._normalize_attribute_values(attrs)
+                for attr in normalized_attributes:
+                    attr_id = f"attr_{self.node_counter}"
+                    self.graph.add_node(
+                        attr_id,
+                        label="attribute",
+                        properties={"name": attr, "chunk_id": chunk_id},
+                        level=1,
+                    )
+                    self._add_edge_with_metadata(
+                        entity_id,
+                        attr_id,
+                        "has_attribute",
+                        relation_origin="doc_local",
+                        confidence=0.7,
+                        evidence_chunk_ids=[str(chunk_id)],
+                        source_paper_ids=[str(chunk_id)],
+                    )
+                    self.node_counter += 1
 
             for triple in triples:
                 if len(triple) < 3:
@@ -1055,7 +1100,8 @@ class KTBuilder:
         for entity, attributes in extracted_attr.items():
             if self._should_skip_entity_name(entity):
                 continue
-            for attr in attributes:
+            normalized_attributes = self._normalize_attribute_values(attributes)
+            for attr in normalized_attributes:
                 # Create attribute node
                 attr_node_id = f"attr_{self.node_counter}"
                 self.graph.add_node(
