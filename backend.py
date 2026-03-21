@@ -11,6 +11,7 @@ import json
 import asyncio
 import glob
 import shutil
+from collections import Counter
 from typing import List, Dict, Optional
 from datetime import datetime
 
@@ -767,9 +768,6 @@ def convert_graphrag_format(graph_data: List) -> Dict:
             node_degree[end_id] = node_degree.get(end_id, 0) + 1
 
     all_nodes = list(nodes_dict.values())
-    paper_nodes = [node for node in all_nodes if node.get("category") == PAPER_VISUAL_CATEGORY]
-    other_nodes = [node for node in all_nodes if node.get("category") != PAPER_VISUAL_CATEGORY]
-
     for node in all_nodes:
         degree = node_degree.get(node["id"], 0)
         node["value"] = degree
@@ -777,32 +775,13 @@ def convert_graphrag_format(graph_data: List) -> Dict:
             node["symbolSize"] = 18 if degree <= 2 else min(24, 18 + degree * 0.6)
         else:
             node["symbolSize"] = min(30, 16 + degree * 0.8)
-
-    paper_nodes.sort(key=lambda node: (-node_degree.get(node["id"], 0), node["id"]))
-    other_nodes.sort(key=lambda node: (-node_degree.get(node["id"], 0), node["id"]))
-
-    max_nodes = 3500
-    paper_budget = min(len(paper_nodes), 2500)
-    kept_nodes = paper_nodes[:paper_budget]
-    remaining_budget = max(0, max_nodes - len(kept_nodes))
-    if remaining_budget:
-        kept_nodes.extend(other_nodes[:remaining_budget])
-
-    kept_node_ids = {node["id"] for node in kept_nodes}
-    kept_links = [
-        link for link in links
-        if link["source"] in kept_node_ids and link["target"] in kept_node_ids
-    ]
-    kept_links.sort(
-        key=lambda link: (
-            0
-            if nodes_dict.get(link["source"], {}).get("category") == PAPER_VISUAL_CATEGORY
-            or nodes_dict.get(link["target"], {}).get("category") == PAPER_VISUAL_CATEGORY
-            else 1,
-            -(node_degree.get(link["source"], 0) + node_degree.get(link["target"], 0)),
-        )
+    kept_nodes, kept_links = select_connected_visual_subgraph(
+        nodes_dict,
+        links,
+        node_degree,
+        max_nodes=3500,
+        max_links=8000,
     )
-    kept_links = kept_links[:8000]
 
     # Create categories
     categories_set = set()
@@ -827,10 +806,122 @@ def convert_graphrag_format(graph_data: List) -> Dict:
             "total_edges": len(links),
             "displayed_nodes": len(kept_nodes),
             "displayed_edges": len(kept_links),
-            "total_papers": len(paper_nodes),
+            "total_papers": sum(1 for node in all_nodes if node.get("category") == PAPER_VISUAL_CATEGORY),
             "displayed_papers": sum(1 for node in kept_nodes if node.get("category") == PAPER_VISUAL_CATEGORY),
         }
     }
+
+
+def _link_priority(link: Dict, nodes_dict: Dict[str, Dict], node_degree: Dict[str, int]) -> tuple:
+    source_category = nodes_dict.get(link["source"], {}).get("category", "")
+    target_category = nodes_dict.get(link["target"], {}).get("category", "")
+    relation = str(link.get("name", "")).strip()
+    categories = {source_category, target_category}
+
+    if source_category == "作者" and relation == "撰写" and target_category == PAPER_VISUAL_CATEGORY:
+        tier = 0
+    elif source_category == PAPER_VISUAL_CATEGORY and relation == "发表于" and target_category == "期刊":
+        tier = 1
+    elif source_category == "作者" and relation == "隶属" and target_category == "机构":
+        tier = 2
+    elif PAPER_VISUAL_CATEGORY in categories:
+        tier = 3
+    elif relation == "has_attribute":
+        tier = 5
+    elif "主题社区" in categories:
+        tier = 6
+    else:
+        tier = 4
+
+    combined_degree = node_degree.get(link["source"], 0) + node_degree.get(link["target"], 0)
+    return (tier, -combined_degree, link["source"], link["target"], relation)
+
+
+def select_connected_visual_subgraph(
+    nodes_dict: Dict[str, Dict],
+    links: List[Dict],
+    node_degree: Dict[str, int],
+    max_nodes: int = 3500,
+    max_links: int = 8000,
+) -> tuple[list[Dict], list[Dict]]:
+    """Select a connectivity-first visualization subset instead of a paper-only subset."""
+    if not nodes_dict or not links:
+        return [], []
+
+    category_totals = Counter(node.get("category", "entity") for node in nodes_dict.values())
+    category_caps = {
+        PAPER_VISUAL_CATEGORY: min(category_totals.get(PAPER_VISUAL_CATEGORY, 0), 1600),
+        "作者": min(category_totals.get("作者", 0), 900),
+        "机构": min(category_totals.get("机构", 0), 500),
+        "期刊": min(category_totals.get("期刊", 0), 250),
+        "主题社区": min(category_totals.get("主题社区", 0), 120),
+    }
+
+    kept_node_ids = set()
+    kept_links: List[Dict] = []
+    category_counts: Counter = Counter()
+
+    def can_add_node(node_id: str) -> bool:
+        if node_id in kept_node_ids:
+            return True
+        if len(kept_node_ids) >= max_nodes:
+            return False
+        category = nodes_dict.get(node_id, {}).get("category", "entity")
+        cap = category_caps.get(category)
+        return cap is None or category_counts[category] < cap
+
+    def add_node(node_id: str) -> None:
+        if node_id in kept_node_ids:
+            return
+        kept_node_ids.add(node_id)
+        category = nodes_dict.get(node_id, {}).get("category", "entity")
+        category_counts[category] += 1
+
+    sorted_links = sorted(links, key=lambda link: _link_priority(link, nodes_dict, node_degree))
+
+    for link in sorted_links:
+        source = link["source"]
+        target = link["target"]
+        if not can_add_node(source) or not can_add_node(target):
+            continue
+        add_node(source)
+        add_node(target)
+        kept_links.append(link)
+        if len(kept_node_ids) >= max_nodes or len(kept_links) >= max_links:
+            break
+
+    if kept_node_ids and len(kept_links) < max_links:
+        for link in sorted_links:
+            if link in kept_links:
+                continue
+            if link["source"] in kept_node_ids and link["target"] in kept_node_ids:
+                kept_links.append(link)
+                if len(kept_links) >= max_links:
+                    break
+
+    connected_ids = set()
+    for link in kept_links:
+        connected_ids.add(link["source"])
+        connected_ids.add(link["target"])
+
+    kept_nodes = [
+        nodes_dict[node_id]
+        for node_id in connected_ids
+        if node_id in nodes_dict
+    ]
+    kept_nodes.sort(
+        key=lambda node: (
+            _link_priority(
+                {"source": node["id"], "target": node["id"], "name": ""},
+                nodes_dict,
+                node_degree,
+            )[0],
+            -node_degree.get(node["id"], 0),
+            node["id"],
+        )
+    )
+    kept_links = [link for link in kept_links if link["source"] in connected_ids and link["target"] in connected_ids]
+    return kept_nodes, kept_links
 
 
 def convert_standard_format(graph_data: Dict) -> Dict:

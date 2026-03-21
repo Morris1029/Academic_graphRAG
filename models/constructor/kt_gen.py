@@ -98,6 +98,16 @@ class KTBuilder:
             "教育理念",
             "人才培养模式",
         }
+        self.metadata_author_blacklist_tokens = (
+            "编辑部",
+            "本刊",
+            "记者",
+            "评论员",
+            "导读",
+            "选题",
+            "活动",
+            "指南",
+        )
         self.allowed_schema_node_types = {
             str(node_type).strip()
             for node_type in self.schema.get("Nodes", [])
@@ -563,6 +573,81 @@ class KTBuilder:
             return ""
         chunk_id = props.get("chunk_id", props.get("chunk id", ""))
         return str(chunk_id).strip() if chunk_id is not None else ""
+
+    def _split_metadata_values(self, raw_value: Any) -> List[str]:
+        text = re.sub(r"\s+", " ", str(raw_value or "")).strip()
+        if not text:
+            return []
+        if any(sep in text for sep in [";", "；", "\n"]):
+            parts = re.split(r"[;；\n]+", text)
+        else:
+            parts = re.split(r"[、,，]+", text)
+
+        values: List[str] = []
+        seen: Set[str] = set()
+        for part in parts:
+            clean = str(part or "").strip(" \t\r\n;；,，、")
+            if not clean or clean in seen:
+                continue
+            seen.add(clean)
+            values.append(clean)
+        return values
+
+    def _is_valid_metadata_author_name(self, author_name: Any) -> bool:
+        name = str(author_name or "").strip()
+        if not name or self._should_skip_entity_name(name):
+            return False
+        if "《" in name or "》" in name:
+            return False
+        if any(token in name for token in self.metadata_author_blacklist_tokens):
+            return False
+        return True
+
+    def _normalize_primary_organization_name(self, org_name: Any) -> str:
+        name = re.sub(r"\s+", " ", str(org_name or "")).strip()
+        if not name:
+            return ""
+
+        suffixes = (
+            "大学",
+            "学院",
+            "中学",
+            "小学",
+            "学校",
+            "研究院",
+            "研究所",
+            "图书馆",
+            "出版社",
+            "医院",
+            "中心",
+            "实验室",
+        )
+        for suffix in suffixes:
+            idx = name.find(suffix)
+            if idx != -1:
+                return name[: idx + len(suffix)]
+        return name
+
+    def _edge_exists(self, src_id: str, tgt_id: str, relation: str) -> bool:
+        normalized_relation = self._normalize_relation_name(relation)
+        if src_id not in self.graph.nodes or tgt_id not in self.graph.nodes:
+            return False
+        for _, neighbor, data in self.graph.out_edges(src_id, data=True):
+            if neighbor == tgt_id and self._normalize_relation_name(data.get("relation", "")) == normalized_relation:
+                return True
+        return False
+
+    def _has_outgoing_relation_to_type(self, src_id: str, relation: str, schema_type: str) -> bool:
+        normalized_relation = self._normalize_relation_name(relation)
+        expected_type = str(schema_type or "").strip()
+        if src_id not in self.graph.nodes:
+            return False
+        for _, neighbor, data in self.graph.out_edges(src_id, data=True):
+            if self._normalize_relation_name(data.get("relation", "")) != normalized_relation:
+                continue
+            if self._get_node_schema_type(neighbor) == expected_type:
+                return True
+        return False
 
     def _resolve_canonical_entity_name(self, entity_name: Any, entity_type: Any = None) -> Tuple[str, str]:
         return self.entity_normalizer.resolve(entity_name, entity_type)
@@ -1281,6 +1366,101 @@ class KTBuilder:
                 paper_by_chunk[str(chunk_id)] = node_id
         return paper_by_chunk, paper_by_title
 
+    def _supplement_metadata_edges(self, documents: List[Dict[str, Any]]) -> None:
+        if not documents:
+            return
+
+        logger.info("Supplementing metadata-driven paper/author/journal/organization edges...")
+        paper_by_chunk, paper_by_title = self._build_paper_node_indexes()
+        edge_counts: Dict[str, int] = defaultdict(int)
+
+        for doc in documents:
+            doc_id = self._get_document_uid(doc)
+            meta = self._get_doc_meta(doc)
+            title = str(meta.get("title", "")).strip()
+            if not title:
+                continue
+
+            title_key = self._normalize_entity_name(title)
+            paper_node_id = paper_by_chunk.get(doc_id) or paper_by_title.get(title_key)
+            if not paper_node_id:
+                paper_node_id = self._find_or_create_entity_direct(title, doc_id, "论文")
+                paper_by_chunk[str(doc_id)] = paper_node_id
+                paper_by_title[title_key] = paper_node_id
+
+            authors = [
+                author
+                for author in self._split_metadata_values(meta.get("authors", ""))
+                if self._is_valid_metadata_author_name(author)
+            ][:3]
+
+            institutions: List[str] = []
+            for org in self._split_metadata_values(meta.get("organ", "")):
+                primary_name = self._normalize_primary_organization_name(org)
+                if primary_name and primary_name not in institutions:
+                    institutions.append(primary_name)
+
+            journal_name = str(meta.get("source", "")).strip()
+            if journal_name:
+                journal_node_id = self._find_or_create_entity_direct(journal_name, doc_id, "期刊")
+                if not self._edge_exists(paper_node_id, journal_node_id, "发表于"):
+                    self._add_edge_with_metadata(
+                        paper_node_id,
+                        journal_node_id,
+                        "发表于",
+                        relation_origin="metadata",
+                        confidence=0.95,
+                        evidence_chunk_ids=[str(doc_id)],
+                        source_paper_ids=[str(doc_id)],
+                    )
+                    edge_counts["paper_journal"] += 1
+
+            for author_idx, author_name in enumerate(authors):
+                author_node_id = self._find_or_create_entity_direct(author_name, doc_id, "作者")
+                if not self._edge_exists(author_node_id, paper_node_id, "撰写"):
+                    self._add_edge_with_metadata(
+                        author_node_id,
+                        paper_node_id,
+                        "撰写",
+                        relation_origin="metadata",
+                        confidence=0.95,
+                        evidence_chunk_ids=[str(doc_id)],
+                        source_paper_ids=[str(doc_id)],
+                    )
+                    edge_counts["author_paper"] += 1
+
+                if not institutions or self._has_outgoing_relation_to_type(author_node_id, "隶属", "机构"):
+                    continue
+
+                if len(institutions) == 1:
+                    candidate_orgs = institutions
+                elif author_idx < len(institutions):
+                    candidate_orgs = [institutions[author_idx]]
+                else:
+                    candidate_orgs = [institutions[0]]
+
+                for institution_name in candidate_orgs:
+                    institution_node_id = self._find_or_create_entity_direct(institution_name, doc_id, "机构")
+                    if self._edge_exists(author_node_id, institution_node_id, "隶属"):
+                        continue
+                    self._add_edge_with_metadata(
+                        author_node_id,
+                        institution_node_id,
+                        "隶属",
+                        relation_origin="metadata",
+                        confidence=0.9,
+                        evidence_chunk_ids=[str(doc_id)],
+                        source_paper_ids=[str(doc_id)],
+                    )
+                    edge_counts["author_org"] += 1
+
+        logger.info(
+            "Metadata edge supplement added %d author-paper, %d paper-journal, %d author-organization edges",
+            edge_counts["author_paper"],
+            edge_counts["paper_journal"],
+            edge_counts["author_org"],
+        )
+
     def _extract_keywords(self, raw_keywords: Any) -> List[str]:
         if isinstance(raw_keywords, list):
             return [str(x).strip() for x in raw_keywords if str(x).strip()]
@@ -1831,6 +2011,8 @@ class KTBuilder:
             f"Replay summary: applied={self.cross_doc_stats['documents_applied']} "
             f"apply_failed={self.cross_doc_stats['documents_apply_failed']}"
         )
+
+        self._supplement_metadata_edges(documents)
 
         if getattr(self.config.construction, "cross_doc_enabled", True):
             logger.info("Starting cross-document bridge stage...")
