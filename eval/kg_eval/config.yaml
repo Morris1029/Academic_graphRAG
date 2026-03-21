@@ -2,14 +2,14 @@ env_path: "eval/.env"
 
 defaults:
   dataset_name: "AIGC-EDU"
-  sample_path: "eval/kg_eval/dataset/AIGC-EDU-kgval.json"
+  sample_path: "eval/kg_eval/dataset/AIGC-EDU-kgval.gold.json"
   main_config_path: "config/base_config.yaml"
   results_dir: "eval/results/kg_eval"
   cross_doc_review_sample_size: 50
   cross_doc_review_seed: 42
   paper_node_top_k: 5
   gold_triple_top_k: 10
-  gold_profile: "deepseek_kg_gold"
+  gold_profile: "qwen_kg_candidate"
   candidate_profile: "qwen_kg_candidate"
 
 profiles:

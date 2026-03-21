@@ -1,0 +1,256 @@
+{
+  "input_path": "data\\uploaded\\AIGC-EDU\\AIGC-EDU.json",
+  "output_path": "eval\\kg_eval\\dataset\\AIGC-EDU-kgval.json",
+  "report_path": "eval\\kg_eval\\dataset\\AIGC-EDU-kgval.sampling_report.json",
+  "input_total_records": 2054,
+  "valid_record_count": 2054,
+  "skipped_missing_id_count": 0,
+  "skipped_non_object_count": 0,
+  "seed": 42,
+  "sample_size_requested": 100,
+  "sampled_record_count": 100,
+  "allocation": {
+    "allocation_mode": "guaranteed_plus_proportional",
+    "guarantee_applied": true,
+    "redistribution_happened": false,
+    "redistribution_rounds": 0,
+    "reallocated_slots": 0
+  },
+  "year_distribution": {
+    "population": {
+      "2023": 311,
+      "2024": 562,
+      "2025": 988,
+      "2026": 193
+    },
+    "sample": {
+      "2023": 17,
+      "2024": 27,
+      "2025": 44,
+      "2026": 12
+    }
+  },
+  "length_distribution": {
+    "population": {
+      "<=200": 132,
+      "201-400": 1369,
+      "401-800": 546,
+      ">800": 7
+    },
+    "sample": {
+      "<=200": 9,
+      "201-400": 61,
+      "401-800": 27,
+      ">800": 3
+    }
+  },
+  "joint_strata": [
+    {
+      "year": "2023",
+      "length_bin": "<=200",
+      "population_count": 23,
+      "target_quota": 2,
+      "actual_sample_count": 2
+    },
+    {
+      "year": "2023",
+      "length_bin": "201-400",
+      "population_count": 211,
+      "target_quota": 10,
+      "actual_sample_count": 10
+    },
+    {
+      "year": "2023",
+      "length_bin": "401-800",
+      "population_count": 76,
+      "target_quota": 4,
+      "actual_sample_count": 4
+    },
+    {
+      "year": "2023",
+      "length_bin": ">800",
+      "population_count": 1,
+      "target_quota": 1,
+      "actual_sample_count": 1
+    },
+    {
+      "year": "2024",
+      "length_bin": "<=200",
+      "population_count": 39,
+      "target_quota": 3,
+      "actual_sample_count": 3
+    },
+    {
+      "year": "2024",
+      "length_bin": "201-400",
+      "population_count": 389,
+      "target_quota": 17,
+      "actual_sample_count": 17
+    },
+    {
+      "year": "2024",
+      "length_bin": "401-800",
+      "population_count": 134,
+      "target_quota": 7,
+      "actual_sample_count": 7
+    },
+    {
+      "year": "2025",
+      "length_bin": "<=200",
+      "population_count": 60,
+      "target_quota": 3,
+      "actual_sample_count": 3
+    },
+    {
+      "year": "2025",
+      "length_bin": "201-400",
+      "population_count": 648,
+      "target_quota": 28,
+      "actual_sample_count": 28
+    },
+    {
+      "year": "2025",
+      "length_bin": "401-800",
+      "population_count": 275,
+      "target_quota": 12,
+      "actual_sample_count": 12
+    },
+    {
+      "year": "2025",
+      "length_bin": ">800",
+      "population_count": 5,
+      "target_quota": 1,
+      "actual_sample_count": 1
+    },
+    {
+      "year": "2026",
+      "length_bin": "<=200",
+      "population_count": 10,
+      "target_quota": 1,
+      "actual_sample_count": 1
+    },
+    {
+      "year": "2026",
+      "length_bin": "201-400",
+      "population_count": 121,
+      "target_quota": 6,
+      "actual_sample_count": 6
+    },
+    {
+      "year": "2026",
+      "length_bin": "401-800",
+      "population_count": 61,
+      "target_quota": 4,
+      "actual_sample_count": 4
+    },
+    {
+      "year": "2026",
+      "length_bin": ">800",
+      "population_count": 1,
+      "target_quota": 1,
+      "actual_sample_count": 1
+    }
+  ],
+  "sample_ids": [
+    "paper_bb575abc280334448495ab2684a4a8b5",
+    "paper_a96990381bc133d4a20d91ca98ec4027",
+    "paper_f185b3d6341eca78992c5d914f87814a",
+    "paper_4d82b8ea9066f19b92becdab4b6a7199",
+    "paper_53596b84340ac82e2980eb8322ce9ceb",
+    "paper_cd886b6af0cf25f355f013ab1ca5aefb",
+    "paper_807fc54c7170164afbe72d1c2086a090",
+    "paper_49e379b5588cf1a637aa5db5c432101b",
+    "paper_bf6ea7a51f9487274b4dd81454bc1597",
+    "paper_816e233899992a4986e70263c12030ed",
+    "paper_05f4367f5762f2201b88d3b49f30d029",
+    "paper_d276bb9475b3bdcbc0e5bd921ee436a4",
+    "paper_d605fd4bf884c9dd14acfcc8f9c3a782",
+    "paper_1f6bb881ed120e9cd5ab4518ef310827",
+    "paper_0f8d1536b2f166e59b35d9c963f2bc0f",
+    "paper_48d5915ec5ad165d8f7af5e8eb4e7508",
+    "paper_7899bf7a1017e28731ececb1c608a226",
+    "paper_ef9bc22fe3b5dbc0e650e74502898f9c",
+    "paper_94c57a7cd2bff32fa16c5af0b31834e3",
+    "paper_6a0b942a09354d37f59db5a6e86c1553",
+    "paper_399df5a298bfa9be07d09ec0cdd45321",
+    "paper_547949d2d3840901c3f53bfd2f6034a4",
+    "paper_2a377f86fa16a425df9ac6bb4e4443ae",
+    "paper_1207d99d34e63e18bd7c992764d99cd3",
+    "paper_d5393e6e4d3907bb606dc56d70ac99a2",
+    "paper_b88a06fd078e44b0f9037d5a46ee4206",
+    "paper_e1d69e64a84c75a7de9427acbfd0a9ca",
+    "paper_8bcb3a526db70238f55d44e414477bdf",
+    "paper_e11fbf373316d3fcec6c619d56988c1a",
+    "paper_ba537714de741c827a1b606639d13e21",
+    "paper_4133564aa20a8bce6455f8b39c07d9f8",
+    "paper_313b156c2cfa3ad16d6f1a72e3c4cb74",
+    "paper_b9298fc29762379a68c17bbcfd1f8d67",
+    "paper_e539db419e396472c7c052be718f4042",
+    "paper_f5167fd63b77c5b331280eb144c7e56a",
+    "paper_31a8bb711eac59d7f245e87ae48e8ebb",
+    "paper_991846cc1d10d44f976ac1053c880639",
+    "paper_6e705bd0439e510ffedbe7ab4d8ef12d",
+    "paper_ef616dbff8eb04663114cc08fbe79a28",
+    "paper_15e8a749d014c8374c45e0a05e74065b",
+    "paper_c2fdc24e99ee12913d56b8e4d67bba24",
+    "paper_3917e134044c6e4d1269bb966219e77e",
+    "paper_bb67319adb4e95cba6774453b9539ba9",
+    "paper_8a45ceceb4534763233f0bbb3a6cf0ce",
+    "paper_a28c720e7d226c0b8bb99f38661281a6",
+    "paper_67a8d035baf042073e156060ce9e25a7",
+    "paper_b6410905029b8d8662305321e6ffabd2",
+    "paper_b195f95982c0b482c3992fb3f541f86b",
+    "paper_c19ad007e4e587cdc26a6f474b250882",
+    "paper_81592af1187064365e90d50178c15001",
+    "paper_ad04c759ec6410877ba0680f0c0e5b53",
+    "paper_63669523c990b9562ba9aa1383008ab9",
+    "paper_b0704d60b817e07cd7f811122376d0f7",
+    "paper_a89ce57cb9046f498afa1ec3a9526daf",
+    "paper_b244628dcbf07bc7d2a5fcde641107e5",
+    "paper_3e8cf13dc7d6704091e7ac2d3367d4ed",
+    "paper_6caa9d5e06640d9af9f0b2ce291d3bd6",
+    "paper_6f49ccb688209f99235eeb6905995e40",
+    "paper_0a9d141cb1d8106bd30c9dda9b2a6628",
+    "paper_7eac4715bef3a0e9cb71d00232c14247",
+    "paper_ea5a3b302cb6b3622173d99194fad75b",
+    "paper_3edbe591c3a28691e06054a79a721640",
+    "paper_dd467b4f19907c38e49ac1b8a6313caf",
+    "paper_509e82e15e18d80f42103ae38d993f6c",
+    "paper_39c53cf280e4b36fc4d7b45f36f1c704",
+    "paper_348177091d25c393b6caebcdd807ab89",
+    "paper_1a32b4b13bc5004311d2eb7d1c334527",
+    "paper_3ce9eb9cc79fc56c926c783e4ee8804f",
+    "paper_6ab668fcd27bef70ee8f7a1b124e1437",
+    "paper_745fc07d8dc24a23e27a84ca429938cc",
+    "paper_509ce3ebe5e1450c64262a8ede2f33de",
+    "paper_ae230d37bd2f35051e79503a66bd017c",
+    "paper_50ec87e401532202be8146d4d54e94fb",
+    "paper_8a1f74fca8fd1bbbb146affe684c62bc",
+    "paper_4d86aa7e21f63a7ea92befeb8898ea55",
+    "paper_c16890dc3b6239851897cf59aa34f8e8",
+    "paper_1bfb5733ce6e3e31a3cb9cd82835e918",
+    "paper_6f5b3fbc9c6f33a85d17a0c80b464bd6",
+    "paper_10a0c0ab7a9e63145ea83896f242b9e2",
+    "paper_e28978a4797ff58f36e5a755c5f8f53d",
+    "paper_d5c9fc0a856ce3b03e893dcd93637e6a",
+    "paper_68400b95ac741ab5ba66c05e4d65d8d8",
+    "paper_f7b87ceed7bca6abc31274b23f12c657",
+    "paper_b48af70c306c68c416d54e4399d86663",
+    "paper_ae2a143afa48f033b5eaecd099ec7891",
+    "paper_0dc4b42db3c9d9c3020be37e1159d49a",
+    "paper_38591ba0cd3a52682ff08f266e7a267c",
+    "paper_6a0d9ba2919ce2e42ecc0f9237f9eaff",
+    "paper_0f705c975d5f58b81f8aa3d2e36c1a29",
+    "paper_6ec7366635e38f38274f1bab7d116cdb",
+    "paper_92cb28a1dbcb9355935a866793c8d54f",
+    "paper_439f615817941a7d60004b1f5cf8b8f8",
+    "paper_8578e580ad6d923d580c4cc9f230f151",
+    "paper_96efa973d1a3ec4e43b7e0e8574a6c27",
+    "paper_da888dd118dfb026ea70ccacd2904e1a",
+    "paper_a0efde3c3b90efbc0167b9e07450b794",
+    "paper_70894bc9a27b3549a33e4ef91d76abff",
+    "paper_6fdc2e05370652b93549adde5d518663",
+    "paper_e01d64ddd422127acf0a9d32af659669",
+    "paper_3b06b8b48c4573dd4e439e1f976802d1"
+  ]
+}

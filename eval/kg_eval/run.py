@@ -97,7 +97,7 @@ def _dataset_paths(bridge: ConstructionBridge) -> Dict[str, str]:
 def command_generate_gold(args: argparse.Namespace, runtime_config: Dict[str, Any]) -> None:
     defaults = runtime_config.get("defaults", {})
     dataset_name = defaults.get("dataset_name", "AIGC-EDU")
-    sample_path = args.sample_path or defaults.get("sample_path", "eval/kg_eval/AIGC-EDU-test.json")
+    sample_path = args.sample_path or defaults.get("sample_path", "eval/kg_eval/dataset/AIGC-EDU-kgval.gold.json")
     profile_name = args.profile or defaults.get("gold_profile")
     if not profile_name:
         raise ValueError("gold_profile must be configured for generate_gold")
@@ -161,7 +161,7 @@ def _build_audit_bundle(
 def command_run(args: argparse.Namespace, runtime_config: Dict[str, Any]) -> None:
     defaults = runtime_config.get("defaults", {})
     dataset_name = defaults.get("dataset_name", "AIGC-EDU")
-    sample_path = args.sample_path or defaults.get("sample_path", "eval/kg_eval/AIGC-EDU-test.json")
+    sample_path = args.sample_path or defaults.get("sample_path", "eval/kg_eval/dataset/AIGC-EDU-kgval.gold.json")
     candidate_profile = args.candidate_profile or defaults.get("candidate_profile")
     if not candidate_profile:
         raise ValueError("candidate_profile must be configured for run")
