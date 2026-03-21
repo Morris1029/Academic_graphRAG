@@ -1,8 +1,9 @@
 import json
+import re
 import time
 import warnings
 from collections import defaultdict
-from typing import Dict, List, Tuple
+from typing import Any, Dict, List, Tuple
 
 import networkx as nx
 import numpy as np
@@ -29,6 +30,20 @@ except ImportError:
 
 
 class FastTreeComm:
+    COMMUNITY_NAMING_PREFERRED_TYPES = {
+        "技术",
+        "研究主题",
+        "教学场景",
+        "教育领域",
+        "研究方法",
+    }
+    COMMUNITY_NAMING_EXCLUDED_TYPES = {
+        "论文",
+        "作者",
+        "机构",
+        "期刊",
+    }
+
     def __init__(self, graph, embedding_model="all-MiniLM-L6-v2", struct_weight=0.3, config=None):
         """
         :param graph: Input graph (NetworkX DiGraph)
@@ -395,36 +410,172 @@ class FastTreeComm:
             return community_nodes[0]
         return self.extract_keywords_from_community(community_nodes)[0]
 
+    def _get_node_schema_type(self, node_id: str) -> str:
+        props = self.graph.nodes[node_id].get("properties", {}) or {}
+        return str(props.get("schema_type", "")).strip()
+
+    def _get_node_name(self, node_id: str) -> str:
+        return str(self.node_names.get(node_id, "")).strip()
+
+    def _rank_community_members(self, community_nodes: List[str], top_k: int = 5) -> List[str]:
+        if not community_nodes:
+            return []
+        ranked = self.extract_keywords_from_community(community_nodes, top_k=min(top_k, len(community_nodes)))
+        deduped = []
+        for node_id in ranked:
+            if node_id not in deduped:
+                deduped.append(node_id)
+        return deduped[:top_k]
+
+    def _collect_community_context(
+        self,
+        members: List[str],
+        concept_top_k: int = 4,
+        paper_top_k: int = 3,
+    ) -> Dict[str, Any]:
+        preferred_nodes = [
+            node_id for node_id in members
+            if self._get_node_schema_type(node_id) in self.COMMUNITY_NAMING_PREFERRED_TYPES
+        ]
+        fallback_nodes = [
+            node_id for node_id in members
+            if self._get_node_schema_type(node_id) not in self.COMMUNITY_NAMING_EXCLUDED_TYPES
+        ]
+        paper_nodes = [
+            node_id for node_id in members
+            if self._get_node_schema_type(node_id) == "论文"
+        ]
+
+        concept_pool = preferred_nodes or fallback_nodes or paper_nodes or members
+        concept_ids = self._rank_community_members(concept_pool, top_k=concept_top_k)
+        paper_ids = self._rank_community_members(paper_nodes, top_k=paper_top_k) if paper_nodes else []
+
+        concept_names = []
+        for node_id in concept_ids:
+            node_name = self._get_node_name(node_id)
+            if node_name and node_name not in concept_names:
+                concept_names.append(node_name)
+
+        paper_titles = []
+        for node_id in paper_ids:
+            title = self._get_node_name(node_id)
+            if title and title not in paper_titles:
+                paper_titles.append(title)
+
+        member_names = []
+        for node_id in members:
+            node_name = self._get_node_name(node_id)
+            if node_name and node_name not in member_names:
+                member_names.append(node_name)
+
+        return {
+            "concept_ids": concept_ids,
+            "concept_names": concept_names,
+            "paper_ids": paper_ids,
+            "paper_titles": paper_titles,
+            "member_names": member_names,
+            "size": len(members),
+        }
+
+    def _sanitize_community_name(self, raw_name: Any) -> str:
+        name = str(raw_name or "").strip()
+        name = re.sub(r"^\s*主题社区\s*[:：-]\s*", "", name)
+        name = name.strip("\"'“”‘’")
+        name = re.sub(r"\s+", " ", name).strip()
+        return name
+
+    def _is_valid_community_name(self, candidate_name: Any, context: Dict[str, Any]) -> bool:
+        name = self._sanitize_community_name(candidate_name)
+        if not name:
+            return False
+        if len(name) > 32:
+            return False
+        lowered = name.casefold()
+        member_names = {str(item).strip().casefold() for item in context.get("member_names", []) if str(item).strip()}
+        paper_titles = {str(item).strip().casefold() for item in context.get("paper_titles", []) if str(item).strip()}
+        if lowered in member_names:
+            return False
+        if lowered in paper_titles:
+            return False
+        if " / " in name or " | " in name:
+            return False
+        slash_parts = [part.strip() for part in re.split(r"[\\/]", name) if part.strip()]
+        if len(slash_parts) >= 3:
+            return False
+        return True
+
+    def _build_fallback_community_name(self, context: Dict[str, Any]) -> str:
+        concept_names = list(context.get("concept_names", []))
+        if concept_names:
+            if len(concept_names) == 1:
+                return concept_names[0]
+            return " · ".join(concept_names[:2])
+
+        paper_titles = list(context.get("paper_titles", []))
+        if paper_titles:
+            return "相关研究议题"
+        return "相关主题"
+
+    def _build_fallback_community_summary(self, context: Dict[str, Any], community_name: str) -> str:
+        concept_names = list(context.get("concept_names", []))
+        paper_titles = list(context.get("paper_titles", []))
+        if concept_names and paper_titles:
+            return (
+                f"该社区围绕{', '.join(concept_names[:3])}等主题展开，"
+                f"代表论文包括{', '.join(paper_titles[:2])}。"
+            )
+        if concept_names:
+            return f"该社区主要聚焦{', '.join(concept_names[:3])}等相近主题与应用方向。"
+        if paper_titles:
+            return f"该社区汇聚了一组相近研究议题，代表论文包括{', '.join(paper_titles[:2])}。"
+        return f"该社区聚焦与“{community_name}”相关的一组相近节点。"
+
+    def _normalize_llm_community_payload(self, payload: Any) -> List[Dict[str, Any]]:
+        if isinstance(payload, list):
+            return [item for item in payload if isinstance(item, dict)]
+        if isinstance(payload, dict):
+            for key in ("communities", "results", "items", "data"):
+                value = payload.get(key)
+                if isinstance(value, list):
+                    return [item for item in value if isinstance(item, dict)]
+        return []
+
     def _build_batch_prompt(self, community_batch):
         batch_data = []
         for comm_id, members in community_batch:
-            member_names = [self.node_names[n] for n in members]
+            context = self._collect_community_context(members)
             center_node = self._compute_community_center(members)
             center_name = self.node_names[center_node]
             
             comm_info = {
                 "id": comm_id,
                 "center": center_name,
-                "members": member_names[:10], 
-                "size": len(members)
+                "concept_candidates": context.get("concept_names", [])[:4],
+                "paper_evidence": context.get("paper_titles", [])[:3],
+                "member_sample": context.get("member_names", [])[:8],
+                "size": len(members),
+                "fallback_name": self._build_fallback_community_name(context),
             }
             batch_data.append(comm_info)
         
-        prompt = f"""Generate names and summaries for the following {len(batch_data)} communities.
+        prompt = f"""Generate concise thematic names and summaries for the following {len(batch_data)} communities.
         Communities data: {json.dumps(batch_data, ensure_ascii=False)}
         
         For each community, follow these guidelines:
         1. **Naming Rules**:
-           - Reflect geographic, cultural, or member traits
-           - Avoid special characters; use hyphens if needed
+           - Name the shared research theme, method, technology, application direction, or teaching problem
+           - Prefer abstract thematic names over raw member names
+           - Do not copy paper titles directly
+           - Do not output prefixes like "主题社区:"
+           - Keep the name short and suitable as a graph node label
         
         2. **Summary Requirements**:
-           - Less than 100 words, same language as center node
-           - Highlight key attributes
+           - 1-2 sentences, same language as the dominant member language
+           - Explain what the community mainly focuses on and, when possible, its major scene or direction
         
         3. **Output Format** - return a JSON array:
         [
-            {{"id": "community_id", "name": "community_name", "summary": "10-word summary"}},
+            {{"id": "community_id", "name": "community_name", "summary": "community summary"}},
             ...
         ]
         """
@@ -435,8 +586,7 @@ class FastTreeComm:
             return []
         response_text = self.llm_client.call_api(content)
         response_json = json_repair.loads(response_text)
-
-        return response_json
+        return self._normalize_llm_community_payload(response_json)
         
 
     def create_super_nodes(self, comm_to_nodes: Dict[str, List[str]], level: int = 4, batch_size: int = 5):
@@ -461,9 +611,16 @@ class FastTreeComm:
             
             for comm_id, members in batch:
                 try:
+                    context = self._collect_community_context(members)
                     llm_info = llm_dict.get(str(comm_id), {})
-                    comm_summary = llm_info.get("summary", f"Community of {len(members)} members")
-                    comm_name = self._build_community_display_name(members)
+                    llm_name = self._sanitize_community_name(llm_info.get("name", ""))
+                    if self._is_valid_community_name(llm_name, context):
+                        comm_name = llm_name
+                    else:
+                        comm_name = self._build_fallback_community_name(context)
+
+                    llm_summary = str(llm_info.get("summary", "")).strip()
+                    comm_summary = llm_summary or self._build_fallback_community_summary(context, comm_name)
                     
                     super_node_id = f"comm_{level}_{comm_id}"
                     member_names = [self.node_names[n] for n in members]
@@ -516,23 +673,9 @@ class FastTreeComm:
         return top_nodes
 
     def _build_community_display_name(self, members: List[str]) -> str:
-        """Build a stable display name for a community super node."""
-        try:
-            keyword_node_ids = self.extract_keywords_from_community(members, top_k=3)
-        except Exception:
-            keyword_node_ids = []
-
-        keyword_names = []
-        for node_id in keyword_node_ids:
-            node_name = str(self.node_names.get(node_id, "")).strip()
-            if node_name and node_name not in keyword_names:
-                keyword_names.append(node_name)
-
-        if keyword_names:
-            return f"\u4e3b\u9898\u793e\u533a: {' / '.join(keyword_names[:3])}"
-
-        center_name = str(self.node_names.get(members[0], "")).strip() if members else ""
-        return f"\u4e3b\u9898\u793e\u533a: {center_name or 'Community'}"
+        """Build a fallback display name for a community super node."""
+        context = self._collect_community_context(members)
+        return self._build_fallback_community_name(context)
 
     def create_super_nodes_with_keywords(self, comm_to_nodes: Dict[str, List[str]], level: int = 4, batch_size: int = 5):
         super_nodes = self.create_super_nodes(comm_to_nodes, level, batch_size)
