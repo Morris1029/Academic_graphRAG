@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -94,6 +95,10 @@ def _dataset_paths(bridge: ConstructionBridge) -> Dict[str, str]:
     }
 
 
+def _format_duration(seconds: float) -> str:
+    return f"{max(0.0, float(seconds)):.1f}s"
+
+
 def command_generate_gold(args: argparse.Namespace, runtime_config: Dict[str, Any]) -> None:
     defaults = runtime_config.get("defaults", {})
     dataset_name = defaults.get("dataset_name", "AIGC-EDU")
@@ -107,26 +112,74 @@ def command_generate_gold(args: argparse.Namespace, runtime_config: Dict[str, An
     service = ExtractionService(bridge, profiles_cfg)
 
     all_records = load_samples(sample_path)
-    target_ids = {str(record["id"]) for record in (all_records[: max(0, args.max_samples)] if args.max_samples is not None else all_records)}
+    target_records = all_records[: max(0, args.max_samples)] if args.max_samples is not None else all_records
+    total_targets = len(target_records)
     updated = 0
     skipped = 0
+    total_start = time.perf_counter()
 
-    for record in all_records:
-        if str(record["id"]) not in target_ids:
-            continue
+    logger.info(
+        "Starting gold draft generation | dataset=%s sample_path=%s profile=%s max_samples=%s target_total=%d",
+        dataset_name,
+        sample_path,
+        profile_name,
+        args.max_samples if args.max_samples is not None else "all",
+        total_targets,
+    )
+
+    for index, record in enumerate(target_records, start=1):
+        sample_id = str(record.get("id", "")).strip() or f"sample_{index}"
+        logger.info("[%d/%d] generating gold for sample_id=%s", index, total_targets, sample_id)
+        sample_start = time.perf_counter()
         gold = record.get("kg_eval", {}).get("gold", {}) or {}
         if str(gold.get("status", "")).strip() == "approved":
             skipped += 1
+            now = time.perf_counter()
+            elapsed = now - sample_start
+            avg = (now - total_start) / index if index else 0.0
+            eta = avg * max(total_targets - index, 0)
+            logger.info(
+                "[%d/%d] finished sample_id=%s status=skipped_approved elapsed=%s avg=%s eta=%s auto_error=%s",
+                index,
+                total_targets,
+                sample_id,
+                _format_duration(elapsed),
+                _format_duration(avg),
+                _format_duration(eta),
+                "false",
+            )
             continue
-        record.setdefault("kg_eval", {})["gold"] = service.build_gold_payload(record, profile_name)
+
+        gold_payload = service.build_gold_payload(record, profile_name)
+        record.setdefault("kg_eval", {})["gold"] = gold_payload
         updated += 1
+        review_notes = str(gold_payload.get("review_notes", "")).strip()
+        auto_error = "AUTO_ERROR:" in review_notes
+        now = time.perf_counter()
+        elapsed = now - sample_start
+        avg = (now - total_start) / index if index else 0.0
+        eta = avg * max(total_targets - index, 0)
+        logger.info(
+            "[%d/%d] finished sample_id=%s status=updated elapsed=%s avg=%s eta=%s auto_error=%s",
+            index,
+            total_targets,
+            sample_id,
+            _format_duration(elapsed),
+            _format_duration(avg),
+            _format_duration(eta),
+            "true" if auto_error else "false",
+        )
 
     save_samples(sample_path, all_records)
+    total_elapsed = time.perf_counter() - total_start
+    avg_elapsed = total_elapsed / total_targets if total_targets else 0.0
     logger.info(
-        "Gold draft generation finished | sample_path=%s updated=%d skipped_approved=%d",
+        "Gold draft generation finished | sample_path=%s updated=%d skipped_approved=%d total_elapsed=%s avg_per_sample=%s",
         sample_path,
         updated,
         skipped,
+        _format_duration(total_elapsed),
+        _format_duration(avg_elapsed),
     )
 
 
