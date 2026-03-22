@@ -148,36 +148,89 @@ LLM_SCOPE_ENV = {
 }
 
 PAPER_VISUAL_CATEGORY = "\u8bba\u6587"
+AUTHOR_VISUAL_CATEGORY = "\u4f5c\u8005"
+ORG_VISUAL_CATEGORY = "\u673a\u6784"
+TECH_VISUAL_CATEGORY = "\u6280\u672f"
+FIELD_VISUAL_CATEGORY = "\u6559\u80b2\u9886\u57df"
+SCENARIO_VISUAL_CATEGORY = "\u6559\u5b66\u573a\u666f"
+ATTRIBUTE_VISUAL_CATEGORY = "\u5c5e\u6027"
+COMMUNITY_VISUAL_CATEGORY = "\u4e3b\u9898\u793e\u533a"
+TOPIC_VISUAL_CATEGORY = "\u7814\u7a76\u4e3b\u9898"
+METHOD_VISUAL_CATEGORY = "\u7814\u7a76\u65b9\u6cd5"
+JOURNAL_VISUAL_CATEGORY = "\u671f\u520a"
+KEYWORD_VISUAL_CATEGORY = "\u5173\u952e\u8bcd"
+ENTITY_VISUAL_CATEGORY = "entity"
 
 VISUAL_CATEGORY_ALIASES = {
-    "community": "主题社区",
-    "keyword": "关键词",
-    "attribute": "属性",
+    "community": COMMUNITY_VISUAL_CATEGORY,
+    "keyword": KEYWORD_VISUAL_CATEGORY,
+    "attribute": ATTRIBUTE_VISUAL_CATEGORY,
     "paper": PAPER_VISUAL_CATEGORY,
-    "author": "作者",
-    "organization": "机构",
-    "institution": "机构",
-    "journal": "期刊",
-    "method": "研究方法",
-    "framework": "研究方法",
-    "topic": "研究主题",
-    "theme": "研究主题",
-    "field": "教育领域",
-    "scenario": "教学场景",
-    "teaching mode": "研究方法",
-    "教学模式": "研究方法",
-    "人才培养模式": "研究方法",
-    "研究理论": "研究主题",
-    "教育理念": "研究主题",
+    "author": AUTHOR_VISUAL_CATEGORY,
+    "organization": ORG_VISUAL_CATEGORY,
+    "institution": ORG_VISUAL_CATEGORY,
+    "journal": JOURNAL_VISUAL_CATEGORY,
+    "method": METHOD_VISUAL_CATEGORY,
+    "framework": METHOD_VISUAL_CATEGORY,
+    "topic": TOPIC_VISUAL_CATEGORY,
+    "theme": TOPIC_VISUAL_CATEGORY,
+    "field": FIELD_VISUAL_CATEGORY,
+    "scenario": SCENARIO_VISUAL_CATEGORY,
+    "teaching mode": METHOD_VISUAL_CATEGORY,
+    "教学模式": METHOD_VISUAL_CATEGORY,
+    "人才培养模式": METHOD_VISUAL_CATEGORY,
+    "研究理论": TOPIC_VISUAL_CATEGORY,
+    "教育理念": TOPIC_VISUAL_CATEGORY,
 }
+
+VISUAL_CATEGORY_ORDER = [
+    PAPER_VISUAL_CATEGORY,
+    TOPIC_VISUAL_CATEGORY,
+    ORG_VISUAL_CATEGORY,
+    TECH_VISUAL_CATEGORY,
+    FIELD_VISUAL_CATEGORY,
+    SCENARIO_VISUAL_CATEGORY,
+    ATTRIBUTE_VISUAL_CATEGORY,
+    COMMUNITY_VISUAL_CATEGORY,
+    AUTHOR_VISUAL_CATEGORY,
+    METHOD_VISUAL_CATEGORY,
+    JOURNAL_VISUAL_CATEGORY,
+    KEYWORD_VISUAL_CATEGORY,
+    ENTITY_VISUAL_CATEGORY,
+]
+
+VISUAL_CATEGORY_COVERAGE_PRIORITY = [
+    TOPIC_VISUAL_CATEGORY,
+    SCENARIO_VISUAL_CATEGORY,
+    COMMUNITY_VISUAL_CATEGORY,
+    METHOD_VISUAL_CATEGORY,
+    TECH_VISUAL_CATEGORY,
+    FIELD_VISUAL_CATEGORY,
+    JOURNAL_VISUAL_CATEGORY,
+    ATTRIBUTE_VISUAL_CATEGORY,
+]
 
 
 def normalize_visual_category(raw_category: str) -> str:
     category = str(raw_category or "").strip()
     if not category:
-        return "entity"
+        return ENTITY_VISUAL_CATEGORY
     lowered = category.lower()
     return VISUAL_CATEGORY_ALIASES.get(lowered, VISUAL_CATEGORY_ALIASES.get(category, category))
+
+
+def ordered_visual_categories(raw_categories) -> List[str]:
+    seen = set()
+    normalized_categories = []
+    for category in raw_categories:
+        normalized = normalize_visual_category(category)
+        if normalized and normalized not in seen:
+            normalized_categories.append(normalized)
+            seen.add(normalized)
+
+    ordered = [category for category in VISUAL_CATEGORY_ORDER if category in seen]
+    extras = sorted(category for category in normalized_categories if category not in ordered)
+    return ordered + extras
 
 
 def build_visual_node_id(node_data: Dict) -> str:
@@ -784,17 +837,13 @@ def convert_graphrag_format(graph_data: List) -> Dict:
         max_links=8000,
     )
 
-    # Create categories
-    categories_set = set()
-    for node in kept_nodes:
-        categories_set.add(node["category"])
-
+    ordered_categories = ordered_visual_categories(node["category"] for node in kept_nodes)
     categories = []
-    for i, cat_name in enumerate(categories_set):
+    for i, cat_name in enumerate(ordered_categories):
         categories.append({
             "name": cat_name,
             "itemStyle": {
-                "color": f"hsl({i * 360 / len(categories_set)}, 70%, 60%)"
+                "color": f"hsl({i * 360 / max(len(ordered_categories), 1)}, 70%, 60%)"
             }
         })
 
@@ -814,22 +863,22 @@ def convert_graphrag_format(graph_data: List) -> Dict:
 
 
 def _link_priority(link: Dict, nodes_dict: Dict[str, Dict], node_degree: Dict[str, int]) -> tuple:
-    source_category = nodes_dict.get(link["source"], {}).get("category", "")
-    target_category = nodes_dict.get(link["target"], {}).get("category", "")
+    source_category = normalize_visual_category(nodes_dict.get(link["source"], {}).get("category", ""))
+    target_category = normalize_visual_category(nodes_dict.get(link["target"], {}).get("category", ""))
     relation = str(link.get("name", "")).strip()
     categories = {source_category, target_category}
 
-    if source_category == "作者" and relation == "撰写" and target_category == PAPER_VISUAL_CATEGORY:
+    if source_category == AUTHOR_VISUAL_CATEGORY and relation == "撰写" and target_category == PAPER_VISUAL_CATEGORY:
         tier = 0
-    elif source_category == PAPER_VISUAL_CATEGORY and relation == "发表于" and target_category == "期刊":
+    elif source_category == PAPER_VISUAL_CATEGORY and relation == "发表于" and target_category == JOURNAL_VISUAL_CATEGORY:
         tier = 1
-    elif source_category == "作者" and relation == "隶属" and target_category == "机构":
+    elif source_category == AUTHOR_VISUAL_CATEGORY and relation == "隶属" and target_category == ORG_VISUAL_CATEGORY:
         tier = 2
     elif PAPER_VISUAL_CATEGORY in categories:
         tier = 3
     elif relation == "has_attribute":
         tier = 5
-    elif "主题社区" in categories:
+    elif COMMUNITY_VISUAL_CATEGORY in categories:
         tier = 6
     else:
         tier = 4
@@ -849,25 +898,36 @@ def select_connected_visual_subgraph(
     if not nodes_dict or not links:
         return [], []
 
-    category_totals = Counter(node.get("category", "entity") for node in nodes_dict.values())
+    category_totals = Counter(
+        normalize_visual_category(node.get("category", ENTITY_VISUAL_CATEGORY))
+        for node in nodes_dict.values()
+    )
     category_caps = {
         PAPER_VISUAL_CATEGORY: min(category_totals.get(PAPER_VISUAL_CATEGORY, 0), 1600),
-        "作者": min(category_totals.get("作者", 0), 900),
-        "机构": min(category_totals.get("机构", 0), 500),
-        "期刊": min(category_totals.get("期刊", 0), 250),
-        "主题社区": min(category_totals.get("主题社区", 0), 120),
+        AUTHOR_VISUAL_CATEGORY: min(category_totals.get(AUTHOR_VISUAL_CATEGORY, 0), 900),
+        ORG_VISUAL_CATEGORY: min(category_totals.get(ORG_VISUAL_CATEGORY, 0), 500),
+        JOURNAL_VISUAL_CATEGORY: min(category_totals.get(JOURNAL_VISUAL_CATEGORY, 0), 250),
+        COMMUNITY_VISUAL_CATEGORY: min(category_totals.get(COMMUNITY_VISUAL_CATEGORY, 0), 120),
     }
 
     kept_node_ids = set()
     kept_links: List[Dict] = []
     category_counts: Counter = Counter()
+    selected_link_keys = set()
+    coverage_targets = [
+        category
+        for category in VISUAL_CATEGORY_COVERAGE_PRIORITY
+        if category_totals.get(category, 0) > 0
+    ]
+    covered_categories = set()
+    coverage_budget = min(24, max_links // 2) if max_links >= 8 and coverage_targets else 0
 
     def can_add_node(node_id: str) -> bool:
         if node_id in kept_node_ids:
             return True
         if len(kept_node_ids) >= max_nodes:
             return False
-        category = nodes_dict.get(node_id, {}).get("category", "entity")
+        category = normalize_visual_category(nodes_dict.get(node_id, {}).get("category", ENTITY_VISUAL_CATEGORY))
         cap = category_caps.get(category)
         return cap is None or category_counts[category] < cap
 
@@ -875,28 +935,61 @@ def select_connected_visual_subgraph(
         if node_id in kept_node_ids:
             return
         kept_node_ids.add(node_id)
-        category = nodes_dict.get(node_id, {}).get("category", "entity")
+        category = normalize_visual_category(nodes_dict.get(node_id, {}).get("category", ENTITY_VISUAL_CATEGORY))
         category_counts[category] += 1
 
-    sorted_links = sorted(links, key=lambda link: _link_priority(link, nodes_dict, node_degree))
-
-    for link in sorted_links:
+    def add_link(link: Dict) -> bool:
         source = link["source"]
         target = link["target"]
+        link_key = (source, target, str(link.get("name", "")))
+        if link_key in selected_link_keys:
+            return False
         if not can_add_node(source) or not can_add_node(target):
-            continue
+            return False
         add_node(source)
         add_node(target)
         kept_links.append(link)
+        selected_link_keys.add(link_key)
+        return True
+
+    sorted_links = sorted(links, key=lambda link: _link_priority(link, nodes_dict, node_degree))
+
+    for target_category in coverage_targets:
+        if len(kept_links) >= coverage_budget:
+            break
+        if target_category in covered_categories:
+            continue
+
+        for link in sorted_links:
+            source_category = normalize_visual_category(
+                nodes_dict.get(link["source"], {}).get("category", ENTITY_VISUAL_CATEGORY)
+            )
+            target_node_category = normalize_visual_category(
+                nodes_dict.get(link["target"], {}).get("category", ENTITY_VISUAL_CATEGORY)
+            )
+            if target_category not in {source_category, target_node_category}:
+                continue
+            if add_link(link):
+                covered_categories.update(
+                    category
+                    for category in (source_category, target_node_category)
+                    if category in coverage_targets
+                )
+                break
+
+    for link in sorted_links:
+        add_link(link)
         if len(kept_node_ids) >= max_nodes or len(kept_links) >= max_links:
             break
 
     if kept_node_ids and len(kept_links) < max_links:
         for link in sorted_links:
-            if link in kept_links:
+            link_key = (link["source"], link["target"], str(link.get("name", "")))
+            if link_key in selected_link_keys:
                 continue
             if link["source"] in kept_node_ids and link["target"] in kept_node_ids:
                 kept_links.append(link)
+                selected_link_keys.add(link_key)
                 if len(kept_links) >= max_links:
                     break
 
