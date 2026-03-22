@@ -33,6 +33,7 @@ def build_markdown_report(summary: Dict[str, Any], audit_payload: Dict[str, Any]
     lines.append(f"- Dataset: {summary.get('dataset_name', '')}")
     lines.append(f"- Sample file: {summary.get('sample_path', '')}")
     lines.append(f"- Approved samples: {summary.get('approved_sample_total', 0)}")
+    lines.append(f"- Candidate model: {summary.get('candidate_model', '')}")
     lines.append("")
 
     consistency = audit_payload.get("consistency_audit", {})

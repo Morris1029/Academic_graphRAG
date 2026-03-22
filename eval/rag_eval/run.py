@@ -10,7 +10,7 @@ from utils.logger import logger
 
 from .dataset_loader import load_question_set
 from .judge import LLMJudge
-from .llm_client import load_eval_env, resolve_profile, temporary_rag_env
+from .llm_client import load_eval_env, resolve_model_profile, temporary_rag_env
 from .models import JudgmentResult, QAPrediction
 from .qa_runner import DatasetValidationError, OfflineGraphRAGRunner
 from .reporter import append_sample_outputs, init_run_outputs, write_summary_outputs
@@ -20,8 +20,8 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Independent GraphRAG evaluation runner")
     parser.add_argument("--config", default="eval/rag_eval/config.yaml", help="Path to evaluation config")
     parser.add_argument("--dataset", help="Dataset name override")
-    parser.add_argument("--answer-profile", help="Answer model profile override")
-    parser.add_argument("--judge-profile", help="Judge model profile override")
+    parser.add_argument("--answer-model", help="Answer model override")
+    parser.add_argument("--judge-model", help="Judge model override")
     parser.add_argument("--qa-mode", choices=["agent", "noagent"], help="QA mode override")
     parser.add_argument("--max-samples", type=int, help="Only evaluate the first N samples")
     return parser.parse_args()
@@ -52,18 +52,18 @@ def main():
     load_eval_env(env_path)
 
     dataset_name = args.dataset or defaults.get("dataset_name", "AIGC-EDU-test")
-    answer_profile_name = args.answer_profile or defaults.get("answer_profile")
-    judge_profile_name = args.judge_profile or defaults.get("judge_profile")
+    answer_model_name = args.answer_model or defaults.get("answer_model")
+    judge_model_name = args.judge_model or defaults.get("judge_model")
     qa_mode = args.qa_mode or defaults.get("qa_mode", "agent")
     max_samples = args.max_samples if args.max_samples is not None else defaults.get("max_samples")
     concurrency = int(defaults.get("concurrency", 1) or 1)
     save_raw_context = bool(defaults.get("save_raw_context", True))
     question_set_path = defaults.get("question_set_path", "eval/dataset/sheet1_questions.json")
 
-    if not answer_profile_name:
-        raise ValueError("answer_profile must be provided via config or CLI")
-    if not judge_profile_name:
-        raise ValueError("judge_profile must be provided via config or CLI")
+    if not answer_model_name:
+        raise ValueError("answer_model must be provided via config or CLI")
+    if not judge_model_name:
+        raise ValueError("judge_model must be provided via config or CLI")
     if concurrency != 1:
         logger.warning(
             "Current evaluation runner executes sequentially; 'concurrency' is reserved for future expansion."
@@ -71,24 +71,31 @@ def main():
 
     dimensions = eval_config.get("evaluation", {}).get("dimensions", {})
     retry_policy = eval_config.get("runtime", {}).get("retry_policy", {})
-    profiles_cfg = eval_config.get("profiles", {})
-    answer_profiles_cfg = profiles_cfg.get("answer_profiles") or profiles_cfg.get("answer", {})
-    judge_profiles_cfg = profiles_cfg.get("judge_profiles") or profiles_cfg.get("judge", {})
+    models_cfg = eval_config.get("models", {})
+    roles_cfg = eval_config.get("roles", {})
 
     samples = load_question_set(
         question_set_path=question_set_path,
         max_samples=max_samples,
     )
 
-    answer_profile = resolve_profile(answer_profile_name, answer_profiles_cfg)
-    judge_profile = resolve_profile(judge_profile_name, judge_profiles_cfg)
+    answer_model_profile = resolve_model_profile(
+        answer_model_name,
+        models_cfg,
+        role_cfg=roles_cfg.get("answer", {}),
+    )
+    judge_model_profile = resolve_model_profile(
+        judge_model_name,
+        models_cfg,
+        role_cfg=roles_cfg.get("judge", {}),
+    )
     logger.info(
-        f"Evaluation profiles | answer_profile={answer_profile_name} judge_profile={judge_profile_name} "
-        "Judge is fixed per run; answer profile is the compared model."
+        f"Evaluation models | answer_model={answer_model_name} judge_model={judge_model_name} "
+        "Judge is fixed per run; answer model is the compared model."
     )
     logger.info(f"Question set path: {question_set_path}")
 
-    with temporary_rag_env(answer_profile):
+    with temporary_rag_env(answer_model_profile):
         try:
             runner = OfflineGraphRAGRunner(
                 config_path=defaults.get("main_config_path", "config/base_config.yaml"),
@@ -101,7 +108,7 @@ def main():
             raise SystemExit(1) from None
 
         judge = LLMJudge(
-            profile=judge_profile,
+            profile=judge_model_profile,
             prompt_path=defaults.get("prompt_path", "eval/prompts/judge_prompt.txt"),
             dimensions=dimensions,
             max_attempts=int(retry_policy.get("judge_max_attempts", 2)),
@@ -110,15 +117,15 @@ def main():
         run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
         output_dir = os.path.join(
             defaults.get("results_dir", "eval/results"),
-            f"{run_id}_{dataset_name}_{answer_profile_name}",
+            f"{run_id}_{dataset_name}_{answer_model_name}",
         )
         run_meta = {
             "run_id": run_id,
             "dataset_name": dataset_name,
             "question_set_path": question_set_path,
             "qa_mode": qa_mode,
-            "answer_profile": answer_profile_name,
-            "judge_profile": judge_profile_name,
+            "answer_model": answer_model_name,
+            "judge_model": judge_model_name,
             "dataset_audit": runner.dataset_audit.to_dict(),
         }
         init_run_outputs(output_dir, dimensions)

@@ -236,13 +236,14 @@ class GenerateGoldLoggingTests(unittest.TestCase):
         mock_service_cls.return_value = mock_service
         mock_perf_counter.side_effect = [100.0, 101.0, 104.0, 105.0, 106.0, 107.0, 109.0, 112.0]
 
-        args = Namespace(sample_path="samples.json", profile="test_profile", max_samples=3)
+        args = Namespace(sample_path="samples.json", gold_model="test_model", max_samples=3)
         runtime_config = {
             "defaults": {
                 "dataset_name": "AIGC-EDU",
                 "main_config_path": "config/base_config.yaml",
             },
-            "profiles": {"extraction_profiles": {"test_profile": {}}},
+            "models": {"test_model": {}},
+            "roles": {"gold": {}},
         }
 
         command_generate_gold(args, runtime_config)
@@ -254,7 +255,7 @@ class GenerateGoldLoggingTests(unittest.TestCase):
 
         rendered_messages = [self._render_log_message(call) for call in mock_logger_info.call_args_list]
         self.assertIn(
-            "Starting gold draft generation | dataset=AIGC-EDU sample_path=samples.json profile=test_profile max_samples=3 target_total=3",
+            "Starting gold draft generation | dataset=AIGC-EDU sample_path=samples.json gold_model=test_model max_samples=3 target_total=3",
             rendered_messages[0],
         )
         self.assertIn("[1/3] generating gold for sample_id=paper_1", rendered_messages[1])

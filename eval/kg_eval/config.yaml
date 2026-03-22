@@ -9,22 +9,30 @@ defaults:
   cross_doc_review_seed: 42
   paper_node_top_k: 5
   gold_triple_top_k: 10
-  gold_profile: "qwen_kg_candidate"
-  candidate_profile: "qwen_kg_candidate"
+  gold_model: "deepseek"
+  candidate_model: "qwen"
 
-profiles:
-  extraction_profiles:
-    deepseek_kg_gold:
-      provider: "openai"
-      model_env: "KG_GOLD_DEEPSEEK_MODEL"
-      base_url_env: "KG_GOLD_DEEPSEEK_BASE_URL"
-      api_key_env: "KG_GOLD_DEEPSEEK_API_KEY"
-      temperature: 0.0
-      timeout_seconds: 120
-    qwen_kg_candidate:
-      provider: "openai"
-      model_env: "KG_CANDIDATE_QWEN_MODEL"
-      base_url_env: "KG_CANDIDATE_QWEN_BASE_URL"
-      api_key_env: "KG_CANDIDATE_QWEN_API_KEY"
-      temperature: 0.0
-      timeout_seconds: 120
+models:
+  deepseek:
+    provider: "openai"
+    model_env: "DEEPSEEK_MODEL"
+    base_url_env: "DEEPSEEK_BASE_URL"
+    api_key_env: "DEEPSEEK_API_KEY"
+  qwen:
+    provider: "openai"
+    model_env: "QWEN_MODEL"
+    base_url_env: "QWEN_BASE_URL"
+    api_key_env: "QWEN_API_KEY"
+  glm:
+    provider: "openai"
+    model_env: "GLM_MODEL"
+    base_url_env: "GLM_BASE_URL"
+    api_key_env: "GLM_API_KEY"
+
+roles:
+  gold:
+    temperature: 0.0
+    timeout_seconds: 120
+  candidate:
+    temperature: 0.0
+    timeout_seconds: 120

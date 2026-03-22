@@ -103,8 +103,8 @@ def render_report_markdown(run_meta: Dict, summary: Dict, rows: List[Dict], dime
         f"- dataset_name: `{run_meta['dataset_name']}`",
         f"- question_set_path: `{run_meta['question_set_path']}`",
         f"- qa_mode: `{run_meta['qa_mode']}`",
-        f"- answer_profile: `{run_meta['answer_profile']}`",
-        f"- judge_profile: `{run_meta['judge_profile']}`",
+        f"- answer_model: `{run_meta['answer_model']}`",
+        f"- judge_model: `{run_meta['judge_model']}`",
         f"- sample_count: `{summary['sample_count']}`",
         "",
         "## Summary",
@@ -147,7 +147,7 @@ def _build_output_rows(
     prediction_row = {
         **sample.to_dict(),
         **prediction.to_dict(),
-        "answer_profile": run_meta["answer_profile"],
+        "answer_model": run_meta["answer_model"],
         "qa_mode": run_meta["qa_mode"],
     }
     if not save_raw_context:
@@ -158,7 +158,7 @@ def _build_output_rows(
     judgment_row = {
         **sample.to_dict(),
         **judgment.to_dict(),
-        "judge_profile": run_meta["judge_profile"],
+        "judge_model": run_meta["judge_model"],
     }
 
     combined_row = {

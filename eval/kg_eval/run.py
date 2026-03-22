@@ -68,12 +68,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     generate_gold = subparsers.add_parser("generate_gold", help="Generate or refresh draft gold annotations")
     generate_gold.add_argument("--sample-path", help="Override sample JSON path")
-    generate_gold.add_argument("--profile", help="Override gold profile name")
+    generate_gold.add_argument("--gold-model", help="Override gold model name")
     generate_gold.add_argument("--max-samples", type=int, help="Only process the first N samples")
 
     run_eval = subparsers.add_parser("run", help="Run candidate extraction and score approved gold samples")
     run_eval.add_argument("--sample-path", help="Override sample JSON path")
-    run_eval.add_argument("--candidate-profile", help="Override candidate profile name")
+    run_eval.add_argument("--candidate-model", help="Override candidate model name")
     run_eval.add_argument("--max-samples", type=int, help="Only score the first N approved samples")
     run_eval.add_argument("--review-file", help="Optional reviewed cross-doc template JSONL path")
 
@@ -103,13 +103,14 @@ def command_generate_gold(args: argparse.Namespace, runtime_config: Dict[str, An
     defaults = runtime_config.get("defaults", {})
     dataset_name = defaults.get("dataset_name", "AIGC-EDU")
     sample_path = args.sample_path or defaults.get("sample_path", "eval/kg_eval/dataset/AIGC-EDU-kgval.gold.json")
-    profile_name = args.profile or defaults.get("gold_profile")
-    if not profile_name:
-        raise ValueError("gold_profile must be configured for generate_gold")
+    gold_model = args.gold_model or defaults.get("gold_model")
+    if not gold_model:
+        raise ValueError("gold_model must be configured for generate_gold")
 
     bridge = ConstructionBridge(dataset_name, defaults.get("main_config_path", "config/base_config.yaml"))
-    profiles_cfg = runtime_config.get("profiles", {}).get("extraction_profiles", {})
-    service = ExtractionService(bridge, profiles_cfg)
+    models_cfg = runtime_config.get("models", {})
+    roles_cfg = runtime_config.get("roles", {})
+    service = ExtractionService(bridge, models_cfg, roles_cfg)
 
     all_records = load_samples(sample_path)
     target_records = all_records[: max(0, args.max_samples)] if args.max_samples is not None else all_records
@@ -119,10 +120,10 @@ def command_generate_gold(args: argparse.Namespace, runtime_config: Dict[str, An
     total_start = time.perf_counter()
 
     logger.info(
-        "Starting gold draft generation | dataset=%s sample_path=%s profile=%s max_samples=%s target_total=%d",
+        "Starting gold draft generation | dataset=%s sample_path=%s gold_model=%s max_samples=%s target_total=%d",
         dataset_name,
         sample_path,
-        profile_name,
+        gold_model,
         args.max_samples if args.max_samples is not None else "all",
         total_targets,
     )
@@ -150,7 +151,7 @@ def command_generate_gold(args: argparse.Namespace, runtime_config: Dict[str, An
             )
             continue
 
-        gold_payload = service.build_gold_payload(record, profile_name)
+        gold_payload = service.build_gold_payload(record, gold_model)
         record.setdefault("kg_eval", {})["gold"] = gold_payload
         updated += 1
         review_notes = str(gold_payload.get("review_notes", "")).strip()
@@ -215,13 +216,14 @@ def command_run(args: argparse.Namespace, runtime_config: Dict[str, Any]) -> Non
     defaults = runtime_config.get("defaults", {})
     dataset_name = defaults.get("dataset_name", "AIGC-EDU")
     sample_path = args.sample_path or defaults.get("sample_path", "eval/kg_eval/dataset/AIGC-EDU-kgval.gold.json")
-    candidate_profile = args.candidate_profile or defaults.get("candidate_profile")
-    if not candidate_profile:
-        raise ValueError("candidate_profile must be configured for run")
+    candidate_model = args.candidate_model or defaults.get("candidate_model")
+    if not candidate_model:
+        raise ValueError("candidate_model must be configured for run")
 
     bridge = ConstructionBridge(dataset_name, defaults.get("main_config_path", "config/base_config.yaml"))
-    profiles_cfg = runtime_config.get("profiles", {}).get("extraction_profiles", {})
-    service = ExtractionService(bridge, profiles_cfg)
+    models_cfg = runtime_config.get("models", {})
+    roles_cfg = runtime_config.get("roles", {})
+    service = ExtractionService(bridge, models_cfg, roles_cfg)
     records = load_samples(sample_path)
     status_counts = count_gold_statuses(records)
     approved_records = [
@@ -248,7 +250,7 @@ def command_run(args: argparse.Namespace, runtime_config: Dict[str, Any]) -> Non
     retrieval_blocks: List[Dict[str, Any]] = []
 
     for record in approved_records:
-        candidate_result = service.extract(record, candidate_profile)
+        candidate_result = service.extract(record, candidate_model, role_name="candidate")
         comparison = compare_extractions(
             bridge,
             record.get("kg_eval", {}).get("gold", {}).get("extraction", {}),
@@ -298,7 +300,7 @@ def command_run(args: argparse.Namespace, runtime_config: Dict[str, Any]) -> Non
         "sample_path": sample_path,
         "status_counts": status_counts,
         "approved_sample_total": len(approved_records),
-        "candidate_profile": candidate_profile,
+        "candidate_model": candidate_model,
         "extraction_metrics": extraction_summary,
         "retrieval_metrics": retrieval_summary,
         "cross_doc_review": cross_doc_summary,

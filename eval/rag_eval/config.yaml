@@ -1,12 +1,12 @@
-env_path: "eval/rag_eval/.env"
+env_path: "eval/.env"
 
 defaults:
   question_set_path: "eval/rag_eval/dataset/sheet1_questions.json"
   dataset_conversion_input: "D:/STUDY MO/Research/Data/Q&A.xlsx"
   dataset_name: "AIGC-EDU-test"
   qa_mode: "agent"
-  answer_profile: "deepseek_rag"
-  judge_profile: "qwen_judge"
+  answer_model: "deepseek"
+  judge_model: "qwen"
   main_config_path: "config/base_config.yaml"
   results_dir: "eval/rag_eval/results"
   prompt_path: "eval/rag_eval/prompts/judge_prompt.txt"
@@ -19,31 +19,25 @@ runtime:
     answer_max_attempts: 2
     judge_max_attempts: 2
 
-profiles:
-  # Judge is fixed per run; answer profile is the compared model.
-  answer_profiles:
-    deepseek_rag:
-      provider: "openai"
-      model_env: "ANSWER_DEEPSEEK_RAG_MODEL"
-      base_url_env: "ANSWER_DEEPSEEK_RAG_BASE_URL"
-      api_key_env: "ANSWER_DEEPSEEK_RAG_API_KEY"
-      temperature: 0.3
-      timeout_seconds: 120
-    qwen_rag:
-      provider: "openai"
-      model_env: "ANSWER_QWEN_RAG_MODEL"
-      base_url_env: "ANSWER_QWEN_RAG_BASE_URL"
-      api_key_env: "ANSWER_QWEN_RAG_API_KEY"
-      temperature: 0.3
-      timeout_seconds: 120
-  judge_profiles:
-    qwen_judge:
-      provider: "openai"
-      model_env: "JUDGE_QWEN_MODEL"
-      base_url_env: "JUDGE_QWEN_BASE_URL"
-      api_key_env: "JUDGE_QWEN_API_KEY"
-      temperature: 0.0
-      timeout_seconds: 120
+models:
+  deepseek:
+    provider: "openai"
+    model_env: "DEEPSEEK_MODEL"
+    base_url_env: "DEEPSEEK_BASE_URL"
+    api_key_env: "DEEPSEEK_API_KEY"
+  qwen:
+    provider: "openai"
+    model_env: "QWEN_MODEL"
+    base_url_env: "QWEN_BASE_URL"
+    api_key_env: "QWEN_API_KEY"
+
+roles:
+  answer:
+    temperature: 0.3
+    timeout_seconds: 120
+  judge:
+    temperature: 0.0
+    timeout_seconds: 120
 
 evaluation:
   dimensions:

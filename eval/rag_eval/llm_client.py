@@ -4,7 +4,7 @@ import os
 import re
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Dict, Iterator, Optional
+from typing import Any, Dict, Iterator, Optional
 
 from dotenv import load_dotenv
 from langchain_openai import AzureChatOpenAI, ChatOpenAI
@@ -39,31 +39,42 @@ def _resolve_value(profile_cfg: Dict, key: str, env_key_field: str, default=None
     return profile_cfg.get(key, default)
 
 
-def resolve_profile(profile_name: str, profiles_cfg: Dict[str, Dict]) -> LLMProfile:
-    if profile_name not in profiles_cfg:
-        raise ValueError(f"LLM profile '{profile_name}' not found in config")
+def resolve_model_profile(
+    model_name: str,
+    models_cfg: Dict[str, Dict[str, Any]],
+    role_cfg: Optional[Dict[str, Any]] = None,
+    overrides: Optional[Dict[str, Any]] = None,
+) -> LLMProfile:
+    if model_name not in models_cfg:
+        raise ValueError(f"LLM model '{model_name}' not found in config")
 
-    profile_cfg = profiles_cfg[profile_name]
+    model_cfg = models_cfg[model_name]
+    merged_cfg: Dict[str, Any] = dict(model_cfg)
+    if role_cfg:
+        merged_cfg.update(role_cfg)
+    if overrides:
+        merged_cfg.update({key: value for key, value in overrides.items() if value is not None})
+
     provider = str(
-        _resolve_value(profile_cfg, "provider", "provider_env", "openai")
+        _resolve_value(merged_cfg, "provider", "provider_env", "openai")
     ).lower()
-    model = _resolve_value(profile_cfg, "model", "model_env")
-    base_url = _resolve_value(profile_cfg, "base_url", "base_url_env")
-    api_key = _resolve_value(profile_cfg, "api_key", "api_key_env")
-    api_version = _resolve_value(profile_cfg, "api_version", "api_version_env")
-    temperature = float(profile_cfg.get("temperature", 0.0))
-    timeout_seconds = profile_cfg.get("timeout_seconds")
+    model = _resolve_value(merged_cfg, "model", "model_env")
+    base_url = _resolve_value(merged_cfg, "base_url", "base_url_env")
+    api_key = _resolve_value(merged_cfg, "api_key", "api_key_env")
+    api_version = _resolve_value(merged_cfg, "api_version", "api_version_env")
+    temperature = float(merged_cfg.get("temperature", 0.0))
+    timeout_seconds = merged_cfg.get("timeout_seconds")
     timeout_seconds = float(timeout_seconds) if timeout_seconds is not None else None
 
     if not model:
-        raise ValueError(f"Profile '{profile_name}' is missing model/model_env")
+        raise ValueError(f"Model '{model_name}' is missing model/model_env")
     if not base_url:
-        raise ValueError(f"Profile '{profile_name}' is missing base_url/base_url_env")
+        raise ValueError(f"Model '{model_name}' is missing base_url/base_url_env")
     if not api_key:
-        raise ValueError(f"Profile '{profile_name}' is missing api_key/api_key_env")
+        raise ValueError(f"Model '{model_name}' is missing api_key/api_key_env")
 
     return LLMProfile(
-        name=profile_name,
+        name=model_name,
         provider=provider,
         model=model,
         base_url=base_url,

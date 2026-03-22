@@ -9,7 +9,7 @@ from typing import Any, Dict, List
 def default_gold_payload() -> Dict[str, Any]:
     return {
         "status": "pending",
-        "generator_profile": "",
+        "generator_model": "",
         "reviewer": "",
         "review_notes": "",
         "updated_at": "",
@@ -99,4 +99,3 @@ def count_gold_statuses(records: List[Dict[str, Any]]) -> Dict[str, int]:
         status = str(record.get("kg_eval", {}).get("gold", {}).get("status", "pending")).strip() or "pending"
         counts[status] = counts.get(status, 0) + 1
     return counts
-

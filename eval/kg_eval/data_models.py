@@ -17,7 +17,7 @@ class KGExtraction:
 @dataclass
 class GoldRecord:
     status: str = "pending"
-    generator_profile: str = ""
+    generator_model: str = ""
     reviewer: str = ""
     review_notes: str = ""
     updated_at: str = ""
@@ -31,7 +31,7 @@ class GoldRecord:
 
 @dataclass
 class ExtractionRunResult:
-    profile_name: str
+    model_name: str
     prompt: str
     raw_response: str
     extraction: KGExtraction

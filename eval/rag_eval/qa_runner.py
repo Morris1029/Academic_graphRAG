@@ -201,7 +201,7 @@ class OfflineGraphRAGRunner:
             message += (
                 f" Recommended dataset: '{audit.recommended_dataset}'. "
                 f"Try: python -m eval.run --config eval/config.yaml --sheet Sheet3 "
-                f"--dataset {audit.recommended_dataset} --answer-profile deepseek_rag"
+                f"--dataset {audit.recommended_dataset} --answer-model deepseek"
             )
         else:
             message += " Please rebuild the target dataset graph and chunk files before evaluation."

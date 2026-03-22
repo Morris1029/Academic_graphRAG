@@ -1,51 +1,59 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Dict
+from typing import Any, Dict, Tuple
 
-from ..rag_eval.llm_client import StandaloneLLMClient, resolve_profile
+from ..rag_eval.llm_client import StandaloneLLMClient, resolve_model_profile
 
 from .construction import ConstructionBridge
 from .data_models import ExtractionRunResult
 
 
 class ExtractionService:
-    def __init__(self, bridge: ConstructionBridge, profiles_cfg: Dict[str, Dict[str, Any]]):
+    def __init__(
+        self,
+        bridge: ConstructionBridge,
+        models_cfg: Dict[str, Dict[str, Any]],
+        roles_cfg: Dict[str, Dict[str, Any]],
+    ):
         self.bridge = bridge
-        self.profiles_cfg = profiles_cfg
-        self._clients: Dict[str, StandaloneLLMClient] = {}
+        self.models_cfg = models_cfg
+        self.roles_cfg = roles_cfg
+        self._clients: Dict[Tuple[str, str], StandaloneLLMClient] = {}
 
-    def _get_client(self, profile_name: str) -> StandaloneLLMClient:
-        if profile_name not in self._clients:
-            profile = resolve_profile(profile_name, self.profiles_cfg)
-            self._clients[profile_name] = StandaloneLLMClient(profile)
-        return self._clients[profile_name]
+    def _get_client(self, model_name: str, role_name: str) -> StandaloneLLMClient:
+        key = (model_name, role_name)
+        if key not in self._clients:
+            role_cfg = self.roles_cfg.get(role_name, {})
+            profile = resolve_model_profile(model_name, self.models_cfg, role_cfg=role_cfg)
+            self._clients[key] = StandaloneLLMClient(profile)
+        return self._clients[key]
 
-    def extract(self, sample: Dict[str, Any], profile_name: str) -> ExtractionRunResult:
+    def extract(self, sample: Dict[str, Any], model_name: str, role_name: str) -> ExtractionRunResult:
         prompt = self.bridge.build_prompt(sample)
-        client = self._get_client(profile_name)
+        client = self._get_client(model_name, role_name)
         raw_response = ""
 
         try:
             raw_response = client.call_api(prompt)
             extraction = self.bridge.parse_response(raw_response)
             return ExtractionRunResult(
-                profile_name=profile_name,
+                model_name=model_name,
                 prompt=prompt,
                 raw_response=raw_response,
                 extraction=extraction,
             )
         except Exception as exc:
             return ExtractionRunResult(
-                profile_name=profile_name,
+                model_name=model_name,
                 prompt=prompt,
                 raw_response=raw_response,
                 extraction=self.bridge.parse_response(raw_response),
                 error=f"{type(exc).__name__}: {exc}",
             )
 
-    def build_gold_payload(self, sample: Dict[str, Any], profile_name: str) -> Dict[str, Any]:
-        result = self.extract(sample, profile_name)
+    def build_gold_payload(self, sample: Dict[str, Any], model_name: str) -> Dict[str, Any]:
+        result = self.extract(sample, model_name, role_name="gold")
         notes = sample.get("kg_eval", {}).get("gold", {}).get("review_notes", "")
         if result.error:
             auto_note = f"AUTO_ERROR: {result.error}"
@@ -53,7 +61,7 @@ class ExtractionService:
 
         return {
             "status": "draft",
-            "generator_profile": profile_name,
+            "generator_model": model_name,
             "reviewer": sample.get("kg_eval", {}).get("gold", {}).get("reviewer", ""),
             "review_notes": notes,
             "updated_at": datetime.utcnow().replace(microsecond=0).isoformat() + "Z",
