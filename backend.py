@@ -29,6 +29,7 @@ import uvicorn
 from utils.logger import logger
 from utils.dataset_audit import audit_dataset
 from utils.paths import repo_path, repo_str
+from utils.process_control import install_interrupt_guard, terminate_process_tree
 import ast
 
 # Import document parser
@@ -1867,4 +1868,9 @@ async def startup_event():
 
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    install_interrupt_guard("Youtu-GraphRAG backend")
+    try:
+        uvicorn.run(app, host="0.0.0.0", port=8000)
+    except KeyboardInterrupt:
+        logger.warning("Backend interrupted by user. Forcing shutdown...")
+        terminate_process_tree()

@@ -16,6 +16,7 @@ from models.retriever import agentic_decomposer as decomposer, enhanced_kt_retri
 from utils.eval import Eval
 from config import get_config, ConfigManager
 from utils.logger import logger
+from utils.process_control import install_interrupt_guard, terminate_process_tree
 
 
 def tuples_to_string(rows, sep=", ", line_sep="\n", wrap_brackets=True):
@@ -550,29 +551,34 @@ def agent_retrieval(graphq, kt_retriever, qa_pairs, schema_path):
 
 
 if __name__ == "__main__":
+    install_interrupt_guard("Youtu-GraphRAG CLI")
     args = parse_arguments()
     config_path = args.config
-    config = get_config(config_path)
-    
-    if args.override:
-        try:
-            overrides = json.loads(args.override)
-            config.override_config(overrides)
-            logger.info("Applied configuration overrides")
-        except json.JSONDecodeError as e:
-            logger.error(f"Invalid JSON in override parameter: {e}")
-            exit(1)
-    
-    setup_environment(config)
-    
-    datasets = args.datasets
-    
-    # ########### Construction ###########
-    if config.triggers.constructor_trigger:
-        logger.info("Starting knowledge graph construction...")
-        graph_construction(datasets)
+    try:
+        config = get_config(config_path)
 
-    # ########### Retriever ###########
-    if config.triggers.retrieve_trigger:
-        logger.info("Starting knowledge retrieval and QA...")
-        retrieval(datasets)
+        if args.override:
+            try:
+                overrides = json.loads(args.override)
+                config.override_config(overrides)
+                logger.info("Applied configuration overrides")
+            except json.JSONDecodeError as e:
+                logger.error(f"Invalid JSON in override parameter: {e}")
+                raise SystemExit(1)
+
+        setup_environment(config)
+
+        datasets = args.datasets
+
+        # ########### Construction ###########
+        if config.triggers.constructor_trigger:
+            logger.info("Starting knowledge graph construction...")
+            graph_construction(datasets)
+
+        # ########### Retriever ###########
+        if config.triggers.retrieve_trigger:
+            logger.info("Starting knowledge retrieval and QA...")
+            retrieval(datasets)
+    except KeyboardInterrupt:
+        logger.warning("Interrupted by user. Forcing shutdown...")
+        terminate_process_tree()

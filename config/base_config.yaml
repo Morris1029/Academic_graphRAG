@@ -1,11 +1,11 @@
 construction:
   chunk_size: 1000
-  cross_doc_enabled: true
+  cross_doc_enabled: false  #跨文档抽边 有点慢先不用
   bridge_min_confidence: 0.75
   bridge_enable_fallback: false
   bridge_max_edges_per_paper: 2
-  batch_size_docs: 24
-  token_budget_per_batch: 12000
+  batch_size_docs: 48
+  token_budget_per_batch: 24000
   bridge_relations:
     # 扩展、对比、复用
     - "扩展"
