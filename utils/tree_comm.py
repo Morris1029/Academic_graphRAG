@@ -46,7 +46,7 @@ class FastTreeComm:
         "期刊",
     }
 
-    def __init__(self, graph, embedding_model="all-MiniLM-L6-v2", struct_weight=0.3, config=None):
+    def __init__(self, graph, embedding_model="BAAI/bge-small-zh-v1.5", struct_weight=0.3, config=None):
         """
         :param graph: Input graph (NetworkX DiGraph)
         :param embedding_model: Sentence embedding model

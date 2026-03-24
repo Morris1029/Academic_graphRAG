@@ -8,7 +8,7 @@ defaults:
   answer_model: "deepseek"
   judge_model: "qwen"
   main_config_path: "config/base_config.yaml"
-  results_dir: "eval/rag_eval/results"
+  results_dir: "eval/results/rag_eval"
   prompt_path: "eval/rag_eval/prompts/judge_prompt.txt"
   max_samples:
   concurrency: 1

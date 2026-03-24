@@ -28,7 +28,7 @@ construction:
   mode: agent  # set noagent to speed up
   overlap: 200
   tree_comm:
-    embedding_model: all-MiniLM-L6-v2
+    embedding_model: BAAI/bge-small-zh-v1.5
     enable_fast_mode: true
     struct_weight: 0.3
     max_total_communities: 100
@@ -51,7 +51,8 @@ embeddings:
   batch_size: 32
   device: cpu
   max_length: 512
-  model_name: all-MiniLM-L6-v2
+  model_name: BAAI/bge-small-zh-v1.5
+  embedding_dim: 512
   text_max_chars: 480
   chunk_text_max_chars: 480
 

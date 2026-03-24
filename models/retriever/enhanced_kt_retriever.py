@@ -59,7 +59,7 @@ class KTRetriever:
             qa_encoder = qa_encoder or SentenceTransformer(config.embeddings.model_name)
         
         self.graph = graph_processor.load_graph_from_json(json_path)
-        self.qa_encoder = qa_encoder or SentenceTransformer("all-MiniLM-L6-v2")
+        self.qa_encoder = qa_encoder or SentenceTransformer("BAAI/bge-small-zh-v1.5")
 
         self.llm_client = call_llm_api.LLMCompletionCall(scope="rag")
         
@@ -92,7 +92,7 @@ class KTRetriever:
 
         self.nlp = spacy.load(config.nlp.spacy_model)
         
-        self.faiss_retriever = DualFAISSRetriever(dataset, self.graph, model_name=config.embeddings.model_name, cache_dir=cache_dir, device=self.device)
+        self.faiss_retriever = DualFAISSRetriever(dataset, self.graph, model_name=config.embeddings.model_name, cache_dir=cache_dir, device=self.device, embedding_dim=config.embeddings.embedding_dim)
         
         self.node_embedding_cache = {}       
         self.triple_embedding_cache = {}     

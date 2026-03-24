@@ -64,7 +64,7 @@ class ConstructionConfig:
 @dataclass
 class TreeCommConfig:
     """Tree-Comm algorithm configuration"""
-    embedding_model: str = "all-MiniLM-L6-v2"
+    embedding_model: str = "BAAI/bge-small-zh-v1.5"
     struct_weight: float = 0.3
     enable_fast_mode: bool = True
     max_total_communities: int = 100
@@ -114,10 +114,11 @@ class RetrievalConfig:
 @dataclass
 class EmbeddingsConfig:
     """Embeddings configuration"""
-    model_name: str = "all-MiniLM-L6-v2"
+    model_name: str = "BAAI/bge-small-zh-v1.5"
     device: str = "cpu"
     batch_size: int = 32
     max_length: int = 512
+    embedding_dim: int = 512
     text_max_chars: int = 480
     chunk_text_max_chars: int = 480
 

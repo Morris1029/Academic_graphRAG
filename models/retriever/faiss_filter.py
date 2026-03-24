@@ -15,7 +15,7 @@ from sentence_transformers import SentenceTransformer
 from utils.logger import logger
 
 class DualFAISSRetriever:
-    def __init__(self, dataset, graph: nx.MultiDiGraph, model_name: str = "all-MiniLM-L6-v2", cache_dir: str = "retriever/faiss_cache_new", device: str = None):
+    def __init__(self, dataset, graph: nx.MultiDiGraph, model_name: str = "BAAI/bge-small-zh-v1.5", cache_dir: str = "retriever/faiss_cache_new", device: str = None, embedding_dim: int = 512):
         """
         :param graph: nx graph
         :param model_name: embedding model
@@ -66,9 +66,10 @@ class DualFAISSRetriever:
         
         # Get model output dimension
         self.model_dim = self.model.get_sentence_embedding_dimension()
+        self.target_dim = embedding_dim
         self.dim_transform = None
-        if self.model_dim != 384:  # If model output dimension is not 384
-            self.dim_transform = torch.nn.Linear(self.model_dim, 384)
+        if self.model_dim != self.target_dim:  # If model output dimension differs from target
+            self.dim_transform = torch.nn.Linear(self.model_dim, self.target_dim)
             if self.device.type == "cuda" and torch.cuda.is_available():
                 self.dim_transform = self.dim_transform.to(self.device)
             else:
