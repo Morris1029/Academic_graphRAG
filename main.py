@@ -171,7 +171,7 @@ def retrieval(datasets):
     for dataset in datasets:
         dataset_config = config.get_dataset_config(dataset)
         
-        with open(dataset_config.qa_path, "r") as f:
+        with open(dataset_config.qa_path, "r", encoding="utf-8") as f:
             qa_pairs = json_repair.load(f)
         
         # evaluator = Eval(config.api.llm_api_key)

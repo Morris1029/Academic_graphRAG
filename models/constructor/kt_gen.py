@@ -1,4 +1,4 @@
-﻿import json
+import json
 import os
 import threading
 import time
@@ -236,21 +236,11 @@ class KTBuilder:
         data_source = chunk.get("meta", chunk)
 
         title = data_source.get("title", "")
-        authors = data_source.get("authors", "")
-        organ = data_source.get("organ", "")
-        keywords = data_source.get("keywords", "")
         abstract = data_source.get("abstract", "")
-        source = data_source.get("source", "")
-        year = data_source.get("year", "")
 
         prompt_text = (
             f"文献标题: {title}\n"
-            f"作者: {authors}\n"
-            f"机构: {organ}\n"
-            f"来源: {source}\n"
-            f"关键词: {keywords}\n"
             f"摘要: {abstract}\n"
-            f"年份: {year}\n"
         )
         return prompt_text
 
@@ -1454,11 +1444,54 @@ class KTBuilder:
                     )
                     edge_counts["author_org"] += 1
 
+            # 补充1：自动抽取 Keywords 作为属性节点
+            keywords = self._extract_keywords(meta.get("keywords", ""))
+            for kw in keywords:
+                if kw:
+                    attr_id = f"attr_{self.node_counter}"
+                    self.graph.add_node(attr_id, label="attribute",
+                                        properties={"name": f"关键词: {kw}", "chunk_id": doc_id},
+                                        level=1)
+                    if not self._edge_exists(paper_node_id, attr_id, "has_attribute"):
+                        self._add_edge_with_metadata(
+                            paper_node_id,
+                            attr_id,
+                            "has_attribute",
+                            relation_origin="metadata",
+                            confidence=0.95,
+                            evidence_chunk_ids=[str(doc_id)],
+                            source_paper_ids=[str(doc_id)],
+                        )
+                        self.node_counter += 1
+                        edge_counts["paper_keyword"] += 1
+            
+            # 补充2：自动抽取 Year
+            year = str(meta.get("year", "")).strip()
+            if year:
+                attr_id = f"attr_{self.node_counter}"
+                self.graph.add_node(attr_id, label="attribute",
+                                    properties={"name": f"年份: {year}", "chunk_id": doc_id},
+                                    level=1)
+                if not self._edge_exists(paper_node_id, attr_id, "has_attribute"):
+                    self._add_edge_with_metadata(
+                        paper_node_id,
+                        attr_id,
+                        "has_attribute",
+                        relation_origin="metadata",
+                        confidence=0.95,
+                        evidence_chunk_ids=[str(doc_id)],
+                        source_paper_ids=[str(doc_id)],
+                    )
+                    self.node_counter += 1
+                    edge_counts["paper_year"] += 1
+
         logger.info(
-            "Metadata edge supplement added %d author-paper, %d paper-journal, %d author-organization edges",
+            "Metadata edge supplement added %d author-paper, %d paper-journal, %d author-organization, %d paper-keyword, %d paper-year edges",
             edge_counts["author_paper"],
             edge_counts["paper_journal"],
             edge_counts["author_org"],
+            edge_counts["paper_keyword"],
+            edge_counts["paper_year"],
         )
 
     def _extract_keywords(self, raw_keywords: Any) -> List[str]:
