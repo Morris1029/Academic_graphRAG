@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import argparse
 import os
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
+from typing import Dict, List, Optional, Tuple
 
 import yaml
 
@@ -11,7 +14,8 @@ from utils.logger import logger
 from .dataset_loader import load_question_set
 from .judge import LLMJudge
 from .llm_client import load_eval_env, resolve_model_profile, temporary_rag_env
-from .models import JudgmentResult, QAPrediction
+from .models import EvaluationSample, JudgmentResult, QAPrediction
+from .prediction_cache import PredictionCache
 from .qa_runner import DatasetValidationError, OfflineGraphRAGRunner
 from .reporter import append_sample_outputs, init_run_outputs, write_summary_outputs
 
@@ -43,6 +47,148 @@ def zero_judgment(sample_id: str, dimensions: dict, verdict: str, error: str) ->
     )
 
 
+# ---------------------------------------------------------------------------
+# Phase-1: 并发 Retrieval & Answer
+# ---------------------------------------------------------------------------
+
+def _answer_one(
+    runner: OfflineGraphRAGRunner,
+    cache: PredictionCache,
+    sample: EvaluationSample,
+    index: int,
+    total: int,
+) -> Tuple[EvaluationSample, QAPrediction]:
+    """在线程池中执行单问题的检索+回答，命中缓存则直接返回。"""
+    cached = cache.get(sample.question_id)
+    if cached is not None:
+        logger.info(
+            f"[{index}/{total}] ⚡ 缓存命中，跳过检索 question_id={sample.question_id}"
+        )
+        return sample, cached
+
+    logger.info(f"[{index}/{total}] 🔍 检索回答 question_id={sample.question_id}")
+    prediction = runner.answer_question(sample.question_id, sample.question)
+    cache.save(prediction)
+    return sample, prediction
+
+
+def run_retrieval_phase(
+    runner: OfflineGraphRAGRunner,
+    cache: PredictionCache,
+    samples: List[EvaluationSample],
+    concurrency: int,
+) -> List[Tuple[EvaluationSample, QAPrediction]]:
+    """
+    Phase-1：并发执行所有问题的检索+回答。
+
+    Returns
+    -------
+    按 samples 原始顺序排列的 (sample, prediction) 列表。
+    """
+    total = len(samples)
+    futures_map: Dict = {}
+
+    logger.info(
+        f"🚀 Phase-1 开始：并发检索回答，共 {total} 题，并发数={concurrency}"
+    )
+
+    with ThreadPoolExecutor(max_workers=concurrency, thread_name_prefix="rag-retrieval") as executor:
+        for index, sample in enumerate(samples, start=1):
+            future = executor.submit(_answer_one, runner, cache, sample, index, total)
+            futures_map[future] = index - 1  # 记录原始下标
+
+    # 按原始顺序重组结果
+    results: List[Optional[Tuple[EvaluationSample, QAPrediction]]] = [None] * total
+    for future, orig_idx in futures_map.items():
+        try:
+            results[orig_idx] = future.result()
+        except Exception as exc:
+            sample = samples[orig_idx]
+            logger.error(f"Phase-1 异常 question_id={sample.question_id}: {exc}")
+            results[orig_idx] = (
+                sample,
+                QAPrediction(
+                    question_id=sample.question_id,
+                    answer="",
+                    schema_path_used=runner.schema_path,
+                    latency_seconds=0.0,
+                    error=str(exc),
+                ),
+            )
+
+    logger.info("✅ Phase-1 完成：全部问题检索回答结束")
+    return results  # type: ignore[return-value]
+
+
+# ---------------------------------------------------------------------------
+# Phase-2: 并发 Judge
+# ---------------------------------------------------------------------------
+
+def _judge_one(
+    judge: LLMJudge,
+    dimensions: dict,
+    sample: EvaluationSample,
+    prediction: QAPrediction,
+    index: int,
+    total: int,
+) -> Tuple[EvaluationSample, QAPrediction, JudgmentResult]:
+    """在线程池中执行单问题的 Judge 评分。"""
+    logger.info(f"[{index}/{total}] ⚖️  Judge 评分 question_id={sample.question_id}")
+    if prediction.error:
+        judgment = zero_judgment(sample.question_id, dimensions, "qa_error", prediction.error)
+    else:
+        judgment = judge.judge(sample, prediction)
+    return sample, prediction, judgment
+
+
+def run_judge_phase(
+    judge: LLMJudge,
+    dimensions: dict,
+    retrieval_results: List[Tuple[EvaluationSample, QAPrediction]],
+    concurrency: int,
+) -> List[Tuple[EvaluationSample, QAPrediction, JudgmentResult]]:
+    """
+    Phase-2：并发执行全部 Judge 评分。
+
+    Returns
+    -------
+    按输入顺序排列的 (sample, prediction, judgment) 列表。
+    """
+    total = len(retrieval_results)
+    futures_map: Dict = {}
+
+    logger.info(
+        f"🚀 Phase-2 开始：并发 Judge 评分，共 {total} 题，并发数={concurrency}"
+    )
+
+    with ThreadPoolExecutor(max_workers=concurrency, thread_name_prefix="rag-judge") as executor:
+        for index, (sample, prediction) in enumerate(retrieval_results, start=1):
+            future = executor.submit(
+                _judge_one, judge, dimensions, sample, prediction, index, total
+            )
+            futures_map[future] = index - 1
+
+    results: List[Optional[Tuple]] = [None] * total
+    for future, orig_idx in futures_map.items():
+        try:
+            results[orig_idx] = future.result()
+        except Exception as exc:
+            sample, prediction = retrieval_results[orig_idx]
+            logger.error(f"Phase-2 Judge 异常 question_id={sample.question_id}: {exc}")
+            results[orig_idx] = (
+                sample,
+                prediction,
+                zero_judgment(sample.question_id, dimensions, "judge_error", str(exc)),
+            )
+
+    logger.info("✅ Phase-2 完成：全部 Judge 评分结束")
+    return results  # type: ignore[return-value]
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
 def main():
     args = parse_args()
     eval_config = load_runtime_config(args.config)
@@ -58,16 +204,18 @@ def main():
     max_samples = args.max_samples if args.max_samples is not None else defaults.get("max_samples")
     concurrency = int(defaults.get("concurrency", 1) or 1)
     save_raw_context = bool(defaults.get("save_raw_context", True))
+    prediction_cache_enabled = bool(defaults.get("prediction_cache", True))
     question_set_path = defaults.get("question_set_path", "eval/dataset/sheet1_questions.json")
 
     if not answer_model_name:
         raise ValueError("answer_model must be provided via config or CLI")
     if not judge_model_name:
         raise ValueError("judge_model must be provided via config or CLI")
-    if concurrency != 1:
-        logger.warning(
-            "Current evaluation runner executes sequentially; 'concurrency' is reserved for future expansion."
-        )
+
+    logger.info(
+        f"评估配置 | dataset={dataset_name} qa_mode={qa_mode} "
+        f"concurrency={concurrency} prediction_cache={prediction_cache_enabled}"
+    )
 
     dimensions = eval_config.get("evaluation", {}).get("dimensions", {})
     retry_policy = eval_config.get("runtime", {}).get("retry_policy", {})
@@ -90,12 +238,27 @@ def main():
         role_cfg=roles_cfg.get("judge", {}),
     )
     logger.info(
-        f"Evaluation models | answer_model={answer_model_name} judge_model={judge_model_name} "
-        "Judge is fixed per run; answer model is the compared model."
+        f"评估模型 | answer_model={answer_model_name} judge_model={judge_model_name}"
     )
-    logger.info(f"Question set path: {question_set_path}")
+    logger.info(f"问题集路径: {question_set_path}")
+
+    # -----------------------------------------------------------------------
+    # 初始化输出目录（在 temporary_rag_env 外先确定 run_id，确保缓存路径一致）
+    # -----------------------------------------------------------------------
+    run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_dir = os.path.join(
+        defaults.get("results_dir", "eval/results/rag_eval"),
+        f"{run_id}_{dataset_name}_{answer_model_name}",
+    )
+
+    # 若本次是续跑同一任务，可通过命令行传入已有 output_dir 覆盖（预留扩展点）
+    # 此处默认每次新建目录；缓存文件放在同一 output_dir 下。
+    init_run_outputs(output_dir, dimensions)
 
     with temporary_rag_env(answer_model_profile):
+        # -------------------------------------------------------------------
+        # 初始化 Runner & Judge
+        # -------------------------------------------------------------------
         try:
             runner = OfflineGraphRAGRunner(
                 config_path=defaults.get("main_config_path", "config/base_config.yaml"),
@@ -109,16 +272,11 @@ def main():
 
         judge = LLMJudge(
             profile=judge_model_profile,
-            prompt_path=defaults.get("prompt_path", "eval/prompts/judge_prompt.txt"),
+            prompt_path=defaults.get("prompt_path", "eval/rag_eval/prompts/judge_prompt.txt"),
             dimensions=dimensions,
             max_attempts=int(retry_policy.get("judge_max_attempts", 2)),
         )
 
-        run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
-        output_dir = os.path.join(
-            defaults.get("results_dir", "eval/results"),
-            f"{run_id}_{dataset_name}_{answer_model_name}",
-        )
         run_meta = {
             "run_id": run_id,
             "dataset_name": dataset_name,
@@ -126,13 +284,58 @@ def main():
             "qa_mode": qa_mode,
             "answer_model": answer_model_name,
             "judge_model": judge_model_name,
+            "concurrency": concurrency,
             "dataset_audit": runner.dataset_audit.to_dict(),
         }
-        init_run_outputs(output_dir, dimensions)
 
-        predictions: list[QAPrediction] = []
-        judgments: list[JudgmentResult] = []
-        combined_rows: list[dict] = []
+        # -------------------------------------------------------------------
+        # 初始化预测缓存（支持断点续跑）
+        # -------------------------------------------------------------------
+        cache = PredictionCache(output_dir=output_dir, enabled=prediction_cache_enabled)
+        if cache.cached_ids:
+            logger.info(
+                f"📦 断点续跑：发现 {len(cache)} 条已缓存预测，将跳过对应检索"
+            )
+
+        # -------------------------------------------------------------------
+        # Phase-1：并发检索 & 回答
+        # -------------------------------------------------------------------
+        retrieval_results = run_retrieval_phase(
+            runner=runner,
+            cache=cache,
+            samples=samples,
+            concurrency=concurrency,
+        )
+
+        # -------------------------------------------------------------------
+        # Phase-2：并发 Judge 评分
+        # -------------------------------------------------------------------
+        judged_results = run_judge_phase(
+            judge=judge,
+            dimensions=dimensions,
+            retrieval_results=retrieval_results,
+            concurrency=concurrency,
+        )
+
+        # -------------------------------------------------------------------
+        # Phase-3：汇总写报告（顺序执行，确保输出文件顺序一致）
+        # -------------------------------------------------------------------
+        logger.info("📝 Phase-3 开始：汇总写入评估报告")
+        combined_rows: List[dict] = []
+
+        for sample, prediction, judgment in judged_results:
+            combined_rows.append(
+                append_sample_outputs(
+                    output_dir=output_dir,
+                    run_meta=run_meta,
+                    sample=sample,
+                    prediction=prediction,
+                    judgment=judgment,
+                    dimensions=dimensions,
+                    save_raw_context=save_raw_context,
+                )
+            )
+
         summary_payload = write_summary_outputs(
             output_dir=output_dir,
             run_meta=run_meta,
@@ -140,48 +343,8 @@ def main():
             dimensions=dimensions,
         )
 
-        for index, sample in enumerate(samples, start=1):
-            logger.info(f"[{index}/{len(samples)}] Evaluating question_id={sample.question_id}")
-            prediction = runner.answer_question(sample.question_id, sample.question)
-            predictions.append(prediction)
-
-            if prediction.error:
-                judgments.append(
-                    zero_judgment(
-                        sample.question_id,
-                        dimensions,
-                        "qa_error",
-                        prediction.error,
-                    )
-                )
-            else:
-                judgments.append(judge.judge(sample, prediction))
-
-            latest_judgment = judgments[-1]
-            combined_rows.append(
-                append_sample_outputs(
-                    output_dir=output_dir,
-                    run_meta=run_meta,
-                    sample=sample,
-                    prediction=prediction,
-                    judgment=latest_judgment,
-                    dimensions=dimensions,
-                    save_raw_context=save_raw_context,
-                )
-            )
-            summary_payload = write_summary_outputs(
-                output_dir=output_dir,
-                run_meta=run_meta,
-                combined_rows=combined_rows,
-                dimensions=dimensions,
-            )
-            logger.info(
-                f"Checkpoint saved after question_id={sample.question_id} "
-                f"({len(combined_rows)}/{len(samples)})"
-            )
-
-    logger.info(f"Evaluation completed. Results saved to: {output_dir}")
-    logger.info(f"Summary: {summary_payload['summary']}")
+    logger.info(f"🎉 评估完成，结果保存至: {output_dir}")
+    logger.info(f"总体评分摘要: {summary_payload['summary']}")
 
 
 if __name__ == "__main__":
