@@ -8,22 +8,12 @@ from typing import Any, Dict, List, Tuple
 
 import networkx as nx
 
-from utils.dataset_audit import audit_dataset
+
 
 from .construction import ConstructionBridge
 
 
-def summarize_consistency_audit(dataset_name: str) -> Dict[str, Any]:
-    raw = audit_dataset(dataset_name)
-    return {
-        "dataset_name": dataset_name,
-        "source_docs_total": int(raw.get("source_docs", 0)),
-        "chunk_total": int(raw.get("chunk_records", 0)),
-        "paper_node_total": int(raw.get("graph_papers", 0)),
-        "missing_doc_uids_in_graph": list(raw.get("missing_doc_uids_in_graph", [])),
-        "missing_doc_uids_in_chunks": list(raw.get("missing_doc_uids_in_chunks", [])),
-        "raw_audit": raw,
-    }
+
 
 
 def _load_relationships(graph_path: str) -> List[Dict[str, Any]]:

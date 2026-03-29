@@ -36,16 +36,7 @@ def build_markdown_report(summary: Dict[str, Any], audit_payload: Dict[str, Any]
     lines.append(f"- Candidate model: {summary.get('candidate_model', '')}")
     lines.append("")
 
-    consistency = audit_payload.get("consistency_audit", {})
     graph_quality = audit_payload.get("graph_quality", {})
-
-    lines.append("## Consistency Audit")
-    lines.append(f"- source_docs_total: {consistency.get('source_docs_total', 0)}")
-    lines.append(f"- chunk_total: {consistency.get('chunk_total', 0)}")
-    lines.append(f"- paper_node_total: {consistency.get('paper_node_total', 0)}")
-    lines.append(f"- missing_doc_uids_in_graph: {len(consistency.get('missing_doc_uids_in_graph', []))}")
-    lines.append(f"- missing_doc_uids_in_chunks: {len(consistency.get('missing_doc_uids_in_chunks', []))}")
-    lines.append("")
 
     lines.append("## Extraction Quality")
     extraction = summary.get("extraction_metrics", {})

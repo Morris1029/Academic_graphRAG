@@ -15,7 +15,6 @@ try:
         build_cross_doc_review_template,
         evaluate_graph_structure,
         score_cross_doc_reviews,
-        summarize_consistency_audit,
     )
     from .construction import ConstructionBridge
     from .extractor import ExtractionService
@@ -32,7 +31,6 @@ except ImportError:  # pragma: no cover - fallback for direct script execution
         build_cross_doc_review_template,
         evaluate_graph_structure,
         score_cross_doc_reviews,
-        summarize_consistency_audit,
     )
     from eval.kg_eval.construction import ConstructionBridge
     from eval.kg_eval.extractor import ExtractionService
@@ -207,7 +205,6 @@ def _build_audit_bundle(
         cross_doc_precision=cross_doc_summary.get("precision") if cross_doc_summary else None,
     )
     return {
-        "consistency_audit": summarize_consistency_audit(bridge.dataset_name),
         "graph_quality": graph_quality,
     }
 
