@@ -3,7 +3,9 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -242,11 +244,22 @@ def command_run(args: argparse.Namespace, runtime_config: Dict[str, Any]) -> Non
         top_k=max(int(defaults.get("gold_triple_top_k", 10)), int(defaults.get("paper_node_top_k", 5))),
     ) if approved_records else None
 
+    # --- 并行化处理（LLM 抽取 + 检索评估）---
+    # max_workers 优先读 config.yaml 的 eval_max_workers，默认 5
+    max_workers = int(defaults.get("eval_max_workers", 5))
+    paper_top_k = int(defaults.get("paper_node_top_k", 5))
+    triple_top_k = int(defaults.get("gold_triple_top_k", 10))
+    total = len(approved_records)
+
     per_sample_rows: List[Dict[str, Any]] = []
     metric_blocks: List[Dict[str, Any]] = []
     retrieval_blocks: List[Dict[str, Any]] = []
+    # 因多线程写共享列表，使用锁保证顺序一致性
+    _lock = threading.Lock()
+    _completed = [0]  # list 封装计数器，避免 nonlocal 语法问题
 
-    for record in approved_records:
+    def _process_one_record(record: Dict[str, Any]) -> Dict[str, Any]:
+        """处理单个样本：LLM 候选抽取 + 检索评估，返回可聚合的字典。"""
         candidate_result = service.extract(record, candidate_model, role_name="candidate")
         comparison = compare_extractions(
             bridge,
@@ -257,23 +270,56 @@ def command_run(args: argparse.Namespace, runtime_config: Dict[str, Any]) -> Non
             record,
             retriever,
             bridge,
-            paper_top_k=int(defaults.get("paper_node_top_k", 5)),
-            triple_top_k=int(defaults.get("gold_triple_top_k", 10)),
+            paper_top_k=paper_top_k,
+            triple_top_k=triple_top_k,
         ) if retriever is not None else {}
+        return {
+            "id": record["id"],
+            "title": record.get("meta", {}).get("title", ""),
+            "gold_status": record.get("kg_eval", {}).get("gold", {}).get("status", ""),
+            "gold_extraction": record.get("kg_eval", {}).get("gold", {}).get("extraction", {}),
+            "candidate_result": candidate_result.to_dict(),
+            **comparison,
+            "retrieval_metrics": retrieval_result,
+            "_comparison": comparison,
+            "_retrieval_result": retrieval_result,
+        }
 
-        metric_blocks.append(comparison)
-        retrieval_blocks.append(retrieval_result)
-        per_sample_rows.append(
-            {
-                "id": record["id"],
-                "title": record.get("meta", {}).get("title", ""),
-                "gold_status": record.get("kg_eval", {}).get("gold", {}).get("status", ""),
-                "gold_extraction": record.get("kg_eval", {}).get("gold", {}).get("extraction", {}),
-                "candidate_result": candidate_result.to_dict(),
-                **comparison,
-                "retrieval_metrics": retrieval_result,
-            }
-        )
+    logger.info(
+        "Starting parallel evaluation | total_samples=%d max_workers=%d candidate_model=%s",
+        total, max_workers, candidate_model,
+    )
+    run_start = time.perf_counter()
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_to_record = {
+            executor.submit(_process_one_record, record): record
+            for record in approved_records
+        }
+        for future in as_completed(future_to_record):
+            record = future_to_record[future]
+            sample_id = str(record.get("id", "")).strip()
+            try:
+                result_row = future.result()
+            except Exception as exc:
+                logger.error("Sample %s failed: %s", sample_id, exc)
+                continue
+
+            with _lock:
+                _completed[0] += 1
+                metric_blocks.append(result_row.pop("_comparison"))
+                retrieval_blocks.append(result_row.pop("_retrieval_result"))
+                per_sample_rows.append(result_row)
+                logger.info(
+                    "[%d/%d] finished sample_id=%s elapsed=%s",
+                    _completed[0], total, sample_id,
+                    _format_duration(time.perf_counter() - run_start),
+                )
+
+    logger.info(
+        "Parallel evaluation done | total=%d completed=%d elapsed=%s",
+        total, _completed[0], _format_duration(time.perf_counter() - run_start),
+    )
 
     extraction_summary = aggregate_metric_blocks(metric_blocks)
     retrieval_summary = aggregate_retrieval_results(retrieval_blocks)
