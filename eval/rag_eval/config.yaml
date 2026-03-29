@@ -43,16 +43,16 @@ evaluation:
   dimensions:
     accuracy:
       weight: 0.2
-      description: "是否与参考答案和检索证据一致，是否存在事实性错误或明显幻觉"
+      description: "事实客观真实性：检验回答与参考答案及检索证据的一致性，严格检测幻觉与事实错误"
     completeness:
       weight: 0.2
-      description: "是否覆盖问题所需关键点，是否遗漏核心要素"
+      description: "信息覆盖广度：评估答案是否详尽囊括参考答案中的核心要素与关键视点"
     logic:
       weight: 0.2
-      description: "回答是否结构清晰、推理自洽、前后不矛盾"
+      description: "论证链路自洽：审查因果推导是否严密、前后呼应、结构清晰且具说服力"
     explainability:
       weight: 0.2
-      description: "是否说明依据、理由或证据，让读者能理解答案为何成立"
+      description: "证据溯源透明度：评估答案是否提供了详实的信息依据与明确的推理链路映射"
     interdisciplinarity:
       weight: 0.2
-      description: "是否体现跨学科关联、比较、迁移、融合或多视角整合"
+      description: "跨域知识融合：检验解答能否有效整合不同学科视阈，实现知识要素的跨域关联与深度印证"
