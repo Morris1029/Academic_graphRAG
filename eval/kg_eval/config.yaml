@@ -9,8 +9,8 @@ defaults:
   cross_doc_review_seed: 42
   paper_node_top_k: 5
   gold_triple_top_k: 10
-  gold_model: "deepseek"
-  candidate_model: "qwen"
+  gold_model: "qwen"
+  candidate_model: "doubao"
 
 models:
   deepseek:
@@ -28,6 +28,16 @@ models:
     model_env: "GLM_MODEL"
     base_url_env: "GLM_BASE_URL"
     api_key_env: "GLM_API_KEY"
+  doubao:
+    provider: "openai"
+    model_env: "DOUBAO_MODEL"
+    base_url_env: "DOUBAO_BASE_URL"
+    api_key_env: "DOUBAO_API_KEY"
+  gemini:
+    provider: "openai"
+    model_env: "GEMINI_MODEL"
+    base_url_env: "GEMINI_BASE_URL"
+    api_key_env: "GEMINI_API_KEY"
 
 roles:
   gold:
