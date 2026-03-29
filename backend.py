@@ -44,7 +44,7 @@ except ImportError as e:
 # Try to import GraphRAG components
 try:
     from models.constructor import kt_gen as constructor
-    from models.retriever import agentic_decomposer as decomposer, enhanced_kt_retriever as retriever
+    from models.retriever import agentic_decomposer as decomposer, enhanced_kt_retriever as retriever, agent_runner
     from config import get_config, ConfigManager
 
     GRAPHRAG_AVAILABLE = True
@@ -1127,247 +1127,53 @@ async def ask_question(request: QuestionRequest, client_id: str = "default"):
         except Exception as _e:
             logger.debug(f"QA start ws send failed: {_e}")
 
-        # Helper functions (reuse a simplified version of main.py logic)
-        def _merge_chunk_contents(ids, mapping):
-            return [mapping.get(i, f"[Missing content for chunk {i}]") for i in ids]
 
-        # Step 1: decomposition
-        await send_progress_update(client_id, "retrieval", 50, "Decomposing question...")
-        decompose_fallback = False
-        decompose_error: Optional[str] = None
-        try:
-            # Offload decomposition to executor
-            loop = asyncio.get_running_loop()
-            decomposition = await loop.run_in_executor(None, lambda: graphq.decompose(question, schema_path))
-            sub_questions = decomposition.get("sub_questions", [])
-            involved_types = decomposition.get("involved_types", {})
+        # Use unified agent runner
+        def _sync_callback(event_type, **kwargs):
             try:
-                await manager.send_message({
-                    "type": "qa_update",
-                    "stage": "decompose",
-                    "sub_questions_count": len(sub_questions),
-                    "sub_questions": [sq.get("sub-question", "") for sq in sub_questions][:5],
-                    "decompose_fallback": False,
-                    "schema_path": schema_path,
-                    "timestamp": datetime.now().isoformat()
-                }, client_id)
-                await asyncio.sleep(0.05)
-            except Exception:
-                pass
-        except Exception as e:
-            logger.error(f"Decompose failed: {e} | schema_path={schema_path}")
-            sub_questions = [{"sub-question": question}]
-            involved_types = {"nodes": [], "relations": [], "attributes": []}
-            decomposition = {"sub_questions": sub_questions, "involved_types": involved_types}
-            decompose_fallback = True
-            decompose_error = str(e)
-            try:
-                await manager.send_message({
-                    "type": "qa_update",
-                    "stage": "decompose",
-                    "decompose_fallback": True,
-                    "decompose_error": decompose_error[:300],
-                    "schema_path": schema_path,
-                    "timestamp": datetime.now().isoformat()
-                }, client_id)
-            except Exception:
-                pass
-
-        reasoning_steps = []
-        all_triples: Dict[str, None] = {}
-        all_chunk_ids: Dict[str, None] = {}
-        all_chunk_contents: Dict[str, str] = {}
-
-        # Step 2: initial retrieval for each sub-question
-        await send_progress_update(client_id, "retrieval", 65, "Initial retrieval...")
-        import time as _time
-        for idx, sq in enumerate(sub_questions):
-            sq_text = sq.get("sub-question", question)
-            start_t = _time.time()
-
-            # Offload retrieval to thread executor to avoid blocking event loop
-            def _run_retrieval():
-                return kt_retriever.process_retrieval_results(
-                    sq_text,
-                    top_k=config.retrieval.top_k_filter,
-                    involved_types=involved_types
-                )
-
-            retrieval_results, elapsed = await loop.run_in_executor(None, _run_retrieval)
-            triples = retrieval_results.get('triples', []) or []
-            chunk_ids = retrieval_results.get('chunk_ids', []) or []
-            chunk_contents = retrieval_results.get('chunk_contents', []) or []
-            retrieval_diagnostics = retrieval_results.get('diagnostics', {}) or {}
-            step_chunk_contents: List[str] = []
-            if isinstance(chunk_contents, dict):
-                for cid, ctext in chunk_contents.items():
-                    all_chunk_contents[cid] = ctext
-                    step_chunk_contents.append(ctext)
-            else:
-                for i_c, cid in enumerate(chunk_ids):
-                    if i_c < len(chunk_contents):
-                        all_chunk_contents[cid] = chunk_contents[i_c]
-                        step_chunk_contents.append(chunk_contents[i_c])
-            for triple_item in triples:
-                all_triples.setdefault(triple_item, None)
-            for chunk_id in chunk_ids:
-                all_chunk_ids.setdefault(str(chunk_id), None)
-            reasoning_steps.append({
-                "type": "sub_question",
-                "question": sq_text,
-                "triples": triples[:10],
-                "triples_count": len(triples),
-                "chunks_count": len(chunk_ids),
-                "processing_time": elapsed,
-                "chunk_contents": step_chunk_contents,
-                "chunk_ids": [str(cid) for cid in chunk_ids],
-                "retrieval_diagnostics": retrieval_diagnostics,
-            })
-
-            # Stream this sub-question's partial result to frontend via WebSocket
-            try:
-                await manager.send_message({
-                    "type": "qa_update",
-                    "stage": "sub_question",
-                    "index": idx + 1,
-                    "total": len(sub_questions),
-                    "question": sq_text,
-                    "triples_preview": list(dict.fromkeys(triples))[:5],
-                    "triples_count": len(triples),
-                    "chunks_count": len(chunk_ids),
-                    "retrieval_diagnostics": retrieval_diagnostics,
-                    "processing_time": elapsed,
-                    "timestamp": datetime.now().isoformat()
-                }, client_id)
-                # yield to event loop to flush WS frames
-                await asyncio.sleep(0)
-            except Exception as _e:
-                logger.debug(f"QA update ws send failed for sub_question {idx + 1}: {_e}")
-
-        # Step 3: IRCoT iterative refinement
-        await send_progress_update(client_id, "retrieval", 75, "Iterative reasoning...")
-        try:
-            await manager.send_message({
-                "type": "qa_update",
-                "stage": "ircot_start",
-                "message": "Starting iterative reasoning",
-                "timestamp": datetime.now().isoformat()
-            }, client_id)
-            await asyncio.sleep(0.05)
-        except Exception:
-            pass
-        max_steps = getattr(getattr(config.retrieval, 'agent', object()), 'max_steps', 3)
-        current_query = question
-        thoughts = []
-
-        # Initial answer attempt
-        initial_triples = list(all_triples.keys())
-        initial_chunk_ids = list(all_chunk_ids.keys())
-        initial_chunk_contents = _merge_chunk_contents(initial_chunk_ids, all_chunk_contents)
-        context_initial = "=== Triples ===\n" + "\n".join(initial_triples[:20]) + "\n=== Chunks ===\n" + "\n".join(
-            initial_chunk_contents[:10])
-        init_prompt = kt_retriever.generate_prompt(question, context_initial)
-        try:
-            # Offload LLM call to thread executor
-            initial_answer = await loop.run_in_executor(None, lambda: kt_retriever.generate_answer(init_prompt))
-        except Exception as e:
-            initial_answer = f"Initial answer failed: {e}"
-        thoughts.append(f"Initial: {initial_answer[:200]}")
-        final_answer = initial_answer
-
-        for step in range(1, max_steps + 1):
-            loop_triples = list(all_triples.keys())
-            loop_chunk_ids = list(all_chunk_ids.keys())
-            loop_chunk_contents = _merge_chunk_contents(loop_chunk_ids, all_chunk_contents)
-            loop_ctx = "=== Triples ===\n" + "\n".join(loop_triples[:20]) + "\n=== Chunks ===\n" + "\n".join(
-                loop_chunk_contents[:10])
-            loop_prompt = f"""
-You are an expert knowledge assistant using iterative retrieval with chain-of-thought reasoning.
-Current Question: {question}
-Current Iteration Query: {current_query}
-Knowledge Context:\n{loop_ctx}
-Previous Thoughts: {' | '.join(thoughts) if thoughts else 'None'}
-Instructions:
-1. If enough info answer with: So the answer is: <answer>
-2. Else propose new query with: The new query is: <query>
-Your reasoning:
-"""
-            try:
-                reasoning = await loop.run_in_executor(None, lambda: kt_retriever.generate_answer(loop_prompt))
-            except Exception as e:
-                reasoning = f"Reasoning error: {e}"
-            thoughts.append(reasoning[:400])
-            reasoning_steps.append({
-                "type": "ircot_step",
-                "question": current_query,
-                "triples": loop_triples[:10],
-                "triples_count": len(loop_triples),
-                "chunks_count": len(loop_chunk_ids),
-                "processing_time": 0,
-                "chunk_contents": loop_chunk_contents[:3],
-                "thought": reasoning[:300]
-            })
-
-            # Stream iterative reasoning step updates (optional but helpful)
-            try:
-                await manager.send_message({
-                    "type": "qa_update",
-                    "stage": "ircot",
-                    "step": step,
-                    "max_steps": max_steps,
-                    "current_query": current_query,
-                    "thought_preview": (reasoning or "")[:200],
-                    "timestamp": datetime.now().isoformat()
-                }, client_id)
-                # yield to event loop to flush WS frames
-                await asyncio.sleep(0)
-            except Exception as _e:
-                logger.debug(f"QA update ws send failed for ircot step {step}: {_e}")
-            if "So the answer is:" in reasoning:
-                m = re.search(r"So the answer is:\s*(.*)", reasoning, flags=re.IGNORECASE | re.DOTALL)
-                final_answer = m.group(1).strip() if m else reasoning
-                break
-            if "The new query is:" not in reasoning:
-                final_answer = initial_answer or reasoning
-                break
-            new_query = reasoning.split("The new query is:", 1)[1].strip().splitlines()[0]
-            if not new_query or new_query == current_query:
-                final_answer = initial_answer or reasoning
-                break
-            current_query = new_query
-            await send_progress_update(client_id, "retrieval", min(90, 75 + step * 5),
-                                       f"Iterative retrieval step {step}...")
-            try:
-                def _run_more_retrieval():
-                    return kt_retriever.process_retrieval_results(current_query, top_k=config.retrieval.top_k_filter)
-
-                new_ret, _ = await loop.run_in_executor(None, _run_more_retrieval)
-                new_triples = new_ret.get('triples', []) or []
-                new_chunk_ids = new_ret.get('chunk_ids', []) or []
-                new_chunk_contents = new_ret.get('chunk_contents', []) or []
-                if isinstance(new_chunk_contents, dict):
-                    for cid, ctext in new_chunk_contents.items():
-                        all_chunk_contents[cid] = ctext
+                msg = {"type": "qa_update", "stage": event_type, "timestamp": datetime.now().isoformat(), **kwargs}
+                if event_type == "retrieval_progress":
+                    progress = kwargs.get("progress", 0)
+                    msg_text = kwargs.get("message", "Processing...")
+                    asyncio.run_coroutine_threadsafe(
+                        send_progress_update(client_id, "retrieval", progress, msg_text),
+                        loop
+                    )
                 else:
-                    for i_c, cid in enumerate(new_chunk_ids):
-                        if i_c < len(new_chunk_contents):
-                            all_chunk_contents[cid] = new_chunk_contents[i_c]
-                for triple_item in new_triples:
-                    all_triples.setdefault(triple_item, None)
-                for chunk_id in new_chunk_ids:
-                    all_chunk_ids.setdefault(str(chunk_id), None)
+                    asyncio.run_coroutine_threadsafe(
+                        manager.send_message(msg, client_id),
+                        loop
+                    )
             except Exception as e:
-                logger.error(f"Iterative retrieval failed: {e}")
-                break
+                pass
 
-        # Final aggregation
-        final_triples = list(all_triples.keys())[:20]
-        final_chunk_ids = list(all_chunk_ids.keys())
-        final_chunk_contents = _merge_chunk_contents(final_chunk_ids, all_chunk_contents)[:10]
+        max_steps = getattr(getattr(config.retrieval, 'agent', object()), 'max_steps', 3)
+        loop = asyncio.get_running_loop()
+        
+        # Offload logic to thread executor to avoid blocking event loop
+        result = await loop.run_in_executor(
+            None, 
+            lambda: agent_runner.run_agent_retrieval(
+                graphq, 
+                kt_retriever, 
+                question, 
+                schema_path, 
+                max_steps, 
+                config.retrieval.top_k_filter,
+                callback=_sync_callback
+            )
+        )
+
+        final_answer = result['answer']
+        sub_questions = result['sub_questions']
+        final_triples = result['retrieved_triples']
+        final_chunk_contents = result['retrieved_chunks']
+        reasoning_steps = result['reasoning_steps']
+        decompose_fallback = result['decompose_fallback']
+        decompose_error = result['decompose_error']
 
         await send_progress_update(client_id, "retrieval", 100, "Answer generation completed!")
 
-        # Notify frontend that QA process is complete with a compact summary
         try:
             await manager.send_message({
                 "type": "qa_complete",
@@ -1382,16 +1188,14 @@ Your reasoning:
 
         visualization_data = {
             "subqueries": prepare_subquery_visualization(sub_questions, reasoning_steps),
-            "knowledge_graph": prepare_retrieved_graph_visualization(list(all_triples.keys())),
+            "knowledge_graph": prepare_retrieved_graph_visualization(final_triples),
             "reasoning_flow": prepare_reasoning_flow_visualization(reasoning_steps),
             "retrieval_details": {
                 "total_triples": len(final_triples),
                 "total_chunks": len(final_chunk_contents),
                 "sub_questions_count": len(sub_questions),
-                "triples_by_subquery": [s.get("triples_count", 0) for s in reasoning_steps if
-                                        s.get("type") == "sub_question"],
-                "diagnostics_by_subquery": [s.get("retrieval_diagnostics", {}) for s in reasoning_steps if
-                                             s.get("type") == "sub_question"],
+                "triples_by_subquery": [s.get("triples_count", 0) for s in reasoning_steps if s.get("type") == "sub_question"],
+                "diagnostics_by_subquery": [s.get("retrieval_diagnostics", {}) for s in reasoning_steps if s.get("type") == "sub_question"],
             }
         }
 

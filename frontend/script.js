@@ -1130,7 +1130,7 @@ function displayAnswer(result) {
         answerContent.className = 'answer-content answer-layout';
         answerContent.innerHTML = `
             <div class="answer-lead">
-                <div class="answer-section-title">${currentLang === 'zh' ? '直接答案' : 'Answer'}</div>
+                <div class="answer-section-title">${currentLang === 'zh' ? '综合回答' : 'Comprehensive Answer'}</div>
                 <div class="answer-lead-text">${renderSafeMarkdown(answerLead || '') || '<p></p>'}</div>
             </div>
             ${renderChunkExplanation(chunkExplanation)}
@@ -1309,7 +1309,7 @@ function extractFirstSentence(text) {
 }
 
 function buildAnswerLead(result) {
-    return extractFirstSentence(result?.answer || '');
+    return result?.answer || '';
 }
 
 function extractChunkTitle(chunkText) {

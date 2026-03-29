@@ -9,6 +9,7 @@ from typing import Dict, List, Optional, Tuple
 from config import reload_config
 from models.retriever import agentic_decomposer as decomposer
 from models.retriever import enhanced_kt_retriever as retriever
+from models.retriever import agent_runner
 from utils.logger import logger
 
 from .models import DatasetAuditResult, QAPrediction
@@ -369,107 +370,26 @@ class OfflineGraphRAGRunner:
 
     def _run_agent(self, question_id: str, question: str) -> QAPrediction:
         start_time = time.time()
-        initial_result = self._initial_question_decomposition(question)
-
-        all_triples = set(initial_result["triples"])
-        all_chunk_ids = set(initial_result["chunk_ids"])
-        all_chunk_contents = {
-            str(chunk_id): content
-            for chunk_id, content in zip(
-                initial_result["chunk_ids"],
-                initial_result["chunk_contents"],
-            )
-        }
-
-        reasoning_steps = list(initial_result["sub_question_results"])
-        thoughts = [f"Initial: {initial_result['initial_answer'][:200]}"]
-        current_query = question
-        final_answer = initial_result["initial_answer"]
         max_steps = int(getattr(self.config.retrieval.agent, "max_steps", 3))
 
-        for step in range(1, max_steps + 1):
-            loop_triples = deduplicate_triples(list(all_triples))
-            loop_chunk_ids = list(dict.fromkeys(all_chunk_ids))
-            loop_chunk_contents = merge_chunk_contents(loop_chunk_ids, all_chunk_contents)
-            loop_context = "=== Triples ===\n" + "\n".join(loop_triples[:20])
-            loop_context += "\n=== Chunks ===\n" + "\n".join(loop_chunk_contents[:10])
-
-            loop_prompt = f"""
-You are an expert knowledge assistant using iterative retrieval with chain-of-thought reasoning.
-Current Question: {question}
-Current Iteration Query: {current_query}
-Knowledge Context:
-{loop_context}
-Previous Thoughts: {' | '.join(thoughts) if thoughts else 'None'}
-Instructions:
-1. If enough information is available, answer with: So the answer is: <answer>
-2. Otherwise propose a new retrieval query with: The new query is: <query>
-Your reasoning:
-"""
-            reasoning = self._call_answer_model(loop_prompt)
-            thoughts.append(reasoning[:400])
-            reasoning_steps.append(
-                {
-                    "type": "ircot_step",
-                    "step": step,
-                    "question": current_query,
-                    "triples_count": len(loop_triples),
-                    "chunks_count": len(loop_chunk_ids),
-                    "thought": reasoning[:300],
-                }
-            )
-
-            if "So the answer is:" in reasoning:
-                match = re.search(
-                    r"So the answer is:\s*(.*)",
-                    reasoning,
-                    flags=re.IGNORECASE | re.DOTALL,
-                )
-                final_answer = match.group(1).strip() if match else reasoning
-                break
-
-            if "The new query is:" not in reasoning:
-                final_answer = final_answer or reasoning
-                break
-
-            new_query = reasoning.split("The new query is:", 1)[1].strip().splitlines()[0]
-            if not new_query or new_query == current_query:
-                final_answer = final_answer or reasoning
-                break
-
-            current_query = new_query
-            retrieval_results, _ = self.kt_retriever.process_retrieval_results(
-                current_query,
-                top_k=self.config.retrieval.top_k_filter,
-            )
-            new_triples = retrieval_results.get("triples", []) or []
-            new_chunk_ids = retrieval_results.get("chunk_ids", []) or []
-            new_chunk_contents = retrieval_results.get("chunk_contents", []) or []
-
-            all_triples.update(new_triples)
-            all_chunk_ids.update(str(chunk_id) for chunk_id in new_chunk_ids)
-
-            if isinstance(new_chunk_contents, dict):
-                for chunk_id, content in new_chunk_contents.items():
-                    all_chunk_contents[str(chunk_id)] = content
-            else:
-                for chunk_index, chunk_id in enumerate(new_chunk_ids):
-                    if chunk_index < len(new_chunk_contents):
-                        all_chunk_contents[str(chunk_id)] = new_chunk_contents[chunk_index]
-
-        final_triples = deduplicate_triples(list(all_triples))[:20]
-        final_chunk_ids = list(dict.fromkeys(all_chunk_ids))
-        final_chunk_contents = merge_chunk_contents(final_chunk_ids, all_chunk_contents)[:10]
+        result = agent_runner.run_agent_retrieval(
+            self.graphq, 
+            self.kt_retriever, 
+            question, 
+            self.schema_path, 
+            max_steps, 
+            self.config.retrieval.top_k_filter
+        )
 
         return QAPrediction(
             question_id=question_id,
-            answer=final_answer,
-            sub_questions=initial_result["sub_questions"],
-            retrieved_triples=final_triples,
-            retrieved_chunks=final_chunk_contents,
-            reasoning_steps=reasoning_steps,
-            decompose_fallback=initial_result["decompose_fallback"],
-            decompose_error=initial_result["decompose_error"],
+            answer=result['answer'],
+            sub_questions=result['sub_questions'],
+            retrieved_triples=result['retrieved_triples'],
+            retrieved_chunks=result['retrieved_chunks'],
+            reasoning_steps=result['reasoning_steps'],
+            decompose_fallback=result['decompose_fallback'],
+            decompose_error=result['decompose_error'],
             schema_path_used=self.schema_path,
             latency_seconds=time.time() - start_time,
         )
