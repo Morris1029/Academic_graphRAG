@@ -1451,20 +1451,45 @@ def prepare_retrieved_graph_visualization(triples: List[str]) -> Dict:
             best_score = score
             best_component_id = comp_idx
 
-    if best_component_id is None:
+    # Strategy change: No longer keep only the 'best' component.
+    # Keep as many relevant components as possible to form a "continuous" evidence subgraph.
+    kept_nodes = []
+    kept_links = []
+    category_order = []
+    
+    # Sort components by score descending to prioritize quality
+    sorted_component_indices = sorted(
+        range(len(components)), 
+        key=lambda i: (
+            len(component_links_map.get(i, [])) * 100 + 
+            sum(1 for nid in components[i] if node_map.get(nid, {}).get("category", "") != "entity") * 10
+        ),
+        reverse=True
+    )
+
+    total_nodes_count = 0
+    max_total_nodes = 150 # Reasonable limit for ECharts
+    
+    for comp_idx in sorted_component_indices:
+        comp_nodes = components[comp_idx]
+        # If we have at least one good component and the next one pushes us over limit, stop.
+        if total_nodes_count > 0 and total_nodes_count + len(comp_nodes) > max_total_nodes:
+            continue
+            
+        for node_id in comp_nodes:
+            node = node_map[node_id]
+            node["component_id"] = comp_idx
+            kept_nodes.append(node)
+            cat = node.get("category", "entity")
+            if cat not in category_order:
+                category_order.append(cat)
+        
+        kept_links.extend(component_links_map.get(comp_idx, []))
+        total_nodes_count += len(comp_nodes)
+
+    if not kept_nodes:
         return {"nodes": [], "links": [], "categories": []}
 
-    category_order = []
-    kept_nodes = []
-    for node_id in components[best_component_id]:
-        node = node_map[node_id]
-        node["component_id"] = best_component_id
-        kept_nodes.append(node)
-        category_name = node.get("category", "entity")
-        if category_name not in category_order:
-            category_order.append(category_name)
-
-    kept_links = component_links_map.get(best_component_id, [])
     categories = [
         {"name": category, "itemStyle": {"color": color_pool[idx % len(color_pool)]}}
         for idx, category in enumerate(category_order)

@@ -1555,11 +1555,21 @@ function displayAnswer(result) {
     console.log('displayAnswer called with result:', result);
     const answerContent = document.getElementById('answerContent');
     if (answerContent) {
+        // Use the full answer and the detailed layout
+        const fullAnswer = result.answer || '';
         const answerLead = buildAnswerLead(result);
         const chunkExplanation = buildChunkExplanation(result, answerLead);
-        const combinedAnswer = buildCombinedAnswerText(answerLead, chunkExplanation);
-        answerContent.className = 'answer-content answer-simple';
-        answerContent.innerHTML = renderSafeMarkdown(combinedAnswer || '') || '<p></p>';
+        const reasoningSummary = buildReasoningSummary(result, answerLead, chunkExplanation);
+        
+        answerContent.className = 'answer-content answer-layout';
+        answerContent.innerHTML = `
+            <div class="answer-lead">
+                <div class="answer-section-title">${currentLang === 'zh' ? '综合回答' : 'Comprehensive Answer'}</div>
+                <div class="answer-lead-text">${renderSafeMarkdown(fullAnswer) || '<p></p>'}</div>
+            </div>
+            ${renderChunkExplanation(chunkExplanation)}
+            ${reasoningSummary}
+        `;
     }
     if (result.decompose_fallback) {
         showMessage((i18n[currentLang] || i18n.en).decomposeFallbackNotice, 'warning', 10000);
@@ -1619,20 +1629,19 @@ function filterKnowledgeGraphForQA(kg) {
         const componentId = Number(node?.component_id ?? -1);
         const isFallbackEntity = Boolean(node?.is_fallback_entity);
 
+        // Strategy change: Simplified filtration to preserve the "continuous" feel of the graph.
+        // We now trust the backend's selection of nodes and only filter if they are completely orphaned entities.
         if (category !== 'entity') {
-            return dominantComponentId === undefined || componentId === dominantComponentId || componentId === -1;
+            return true;
         }
 
-        if (degree >= 2) {
+        // For generic entities, keep them if they represent at least one piece of evidence (degree >= 1).
+        if (degree >= 1) {
             return true;
         }
-        if (!isFallbackEntity && degree >= 1) {
-            return true;
-        }
-        if (dominantComponentId !== undefined && componentId === dominantComponentId && degree >= 1) {
-            return true;
-        }
-        return false;
+        
+        // If it's a fallback entity from unstructured extraction, still prefer showing it if it's connected.
+        return !isFallbackEntity;
     });
 
     const nodeIdSet = new Set(keptNodes.map((node) => String(node.id)));
