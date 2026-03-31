@@ -9,7 +9,7 @@ import pandas as pd
 
 
 DEFAULT_INPUT = "D:/STUDY MO/Research/Data/Q&A.xlsx"
-DEFAULT_OUTPUT = "eval/dataset/sheet1_questions.json"
+DEFAULT_OUTPUT = "eval/rag_eval/dataset/sheet1_questions.json"
 SHEET_NAME = "dataset"
 
 SOURCE_COLUMNS = {

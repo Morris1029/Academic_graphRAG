@@ -3,9 +3,9 @@ env_path: "eval/.env"
 defaults:
   question_set_path: "eval/rag_eval/dataset/sheet1_questions.json"
   dataset_conversion_input: "D:/STUDY MO/Research/Data/Q&A.xlsx"
-  dataset_name: "AIGC-EDU-test"
+  dataset_name: "AIGC-EDU"
   qa_mode: "agent"
-  answer_model: "deepseek"
+  answer_model: "gemini"
   judge_model: "qwen"
   main_config_path: "config/base_config.yaml"
   results_dir: "eval/results/rag_eval"
@@ -31,6 +31,26 @@ models:
     model_env: "QWEN_MODEL"
     base_url_env: "QWEN_BASE_URL"
     api_key_env: "QWEN_API_KEY"
+  qwen35p:                           
+    provider: "openai"
+    model_env: "QWEN35P_MODEL"       
+    base_url_env: "QWEN_BASE_URL"   
+    api_key_env: "QWEN_API_KEY"     
+  glm:
+    provider: "openai"
+    model_env: "GLM_MODEL"
+    base_url_env: "GLM_BASE_URL"
+    api_key_env: "GLM_API_KEY"
+  doubao:
+    provider: "openai"
+    model_env: "DOUBAO_MODEL"
+    base_url_env: "DOUBAO_BASE_URL"
+    api_key_env: "DOUBAO_API_KEY"
+  gemini:
+    provider: "openai"
+    model_env: "GEMINI_MODEL"
+    base_url_env: "GEMINI_BASE_URL"
+    api_key_env: "GEMINI_API_KEY"
 
 roles:
   answer:
