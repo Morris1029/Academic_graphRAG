@@ -1,5 +1,6 @@
 ﻿<!DOCTYPE html>
 <html lang="zh">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -12,6 +13,7 @@
     <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/axios@1.6.2/dist/axios.min.js"></script>
 </head>
+
 <body>
     <div class="container">
         <div class="header">
@@ -24,7 +26,7 @@
                 <img src="/assets/SYSU.png" alt="SYSU Logo" class="logo-image">
                 <div>
                     <div class="project-title">基于图检索增强生成的跨学科知识发现研究</div>
-                    <div class="logo">SYSU-GraphRAG</div>
+                    <div class="logo">Academic-GraphRAG</div>
                 </div>
             </div>
 
@@ -67,9 +69,12 @@
             <div class="card">
                 <h2 id="quickActionsTitle">快捷操作</h2>
                 <div class="quick-actions">
-                    <button class="btn" id="qaUploadDocsBtn" onclick="switchTab('upload', document.getElementById('tabUpload'))">上传文档</button>
-                    <button class="btn" id="qaViewGraphBtn" onclick="switchTab('graph', document.getElementById('tabGraph'))">查看图谱</button>
-                    <button class="btn" id="qaQueryBtn" onclick="switchTab('qa', document.getElementById('tabQA'))">发起问答</button>
+                    <button class="btn" id="qaUploadDocsBtn"
+                        onclick="switchTab('upload', document.getElementById('tabUpload'))">上传文档</button>
+                    <button class="btn" id="qaViewGraphBtn"
+                        onclick="switchTab('graph', document.getElementById('tabGraph'))">查看图谱</button>
+                    <button class="btn" id="qaQueryBtn"
+                        onclick="switchTab('qa', document.getElementById('tabQA'))">发起问答</button>
                     <button class="btn btn-secondary" id="qaRefreshBtn" onclick="refreshData()">刷新数据</button>
                 </div>
             </div>
@@ -114,7 +119,8 @@
   }
 ]</pre>
                     </div>
-                    <input type="file" id="fileInput" multiple accept=".txt,.json,.md,.pdf,.docx,.doc" style="display: none;">
+                    <input type="file" id="fileInput" multiple accept=".txt,.json,.md,.pdf,.docx,.doc"
+                        style="display: none;">
                 </div>
 
                 <div id="fileList" class="file-list hidden"></div>
@@ -190,4 +196,5 @@
 
     <script src="script.js"></script>
 </body>
+
 </html>
