@@ -1431,7 +1431,11 @@ class KTRetriever:
                 )
 
             candidate_nodes.sort(key=lambda x: x[1], reverse=True)
-            filtered_candidate_nodes = [node for node, score in candidate_nodes if score > 0.05]
+            # Raised threshold 0.05 -> 0.25 to cut low-relevance nodes
+            filtered_candidate_nodes = [node for node, score in candidate_nodes if score > 0.25]
+            # Adaptive fallback: if too few nodes pass, relax threshold to 0.1
+            if len(filtered_candidate_nodes) < max(2, self.top_k // 2):
+                filtered_candidate_nodes = [node for node, score in candidate_nodes if score > 0.1]
             entity_first_nodes = [node for node in filtered_candidate_nodes if self._is_primary_entity_node(node)]
             fallback_nodes = [node for node in filtered_candidate_nodes if node not in entity_first_nodes]
             top_nodes = (entity_first_nodes + fallback_nodes)[:self.top_k]
@@ -1498,14 +1502,43 @@ class KTRetriever:
     def _get_cached_neighbors(self, node_id: str) -> List[str]:
         return list(self.graph.neighbors(node_id))
 
-    def _optimized_neighbor_expansion(self, top_nodes: List[str], question_embed: torch.Tensor) -> List[Tuple]:
-        all_neighbors = set()
-        edge_queries = set()
+    def _optimized_neighbor_expansion(
+        self, top_nodes: List[str], question_embed: torch.Tensor,
+        neighbor_sim_threshold: float = 0.2
+    ) -> List[Tuple]:
+        """Expand top nodes to neighbors, keeping only semantically relevant ones.
+
+        A neighbor is kept only if its cached embedding has cosine similarity
+        >= neighbor_sim_threshold with question_embed.  This prevents hub nodes
+        from flooding results with unrelated triples.  Nodes without a cached
+        embedding are accepted by default to avoid missing valid hits.
+        """
+        edge_queries: set = set()
         for node in top_nodes:
             neighbors = self._get_cached_neighbors(node)
-            all_neighbors.update(n for n in neighbors)
-            edge_queries.update((node, n) for n in all_neighbors)
-            edge_queries.update((n, node) for n in all_neighbors)
+            for nb in neighbors:
+                nb_embed = self.node_embedding_cache.get(nb)
+                if nb_embed is None:
+                    # No embedding cached - accept by default
+                    edge_queries.add((node, nb))
+                    edge_queries.add((nb, node))
+                else:
+                    try:
+                        q = question_embed
+                        e = nb_embed
+                        if q.dim() == 1:
+                            q = q.unsqueeze(0)
+                        if e.dim() == 1:
+                            e = e.unsqueeze(0)
+                        e = e.to(q.device)
+                        sim = F.cosine_similarity(q, e, dim=1).item()
+                        if sim >= neighbor_sim_threshold:
+                            edge_queries.add((node, nb))
+                            edge_queries.add((nb, node))
+                    except Exception:
+                        # Fallback: accept on error
+                        edge_queries.add((node, nb))
+                        edge_queries.add((nb, node))
 
         triples = []
         for u, v in edge_queries:
@@ -2278,7 +2311,9 @@ class KTRetriever:
             f"paper_anchor_injected={injection_info['paper_anchor_injected']} "
             f"count={injection_info['injected_count']} reason={injection_info['reason']}"
         )
-        limited_scored_triples = all_scored_triples[:top_k]
+        # Cap triples at half of top_k; gives more context window to chunks
+        triple_cap = max(top_k // 2, 10)
+        limited_scored_triples = all_scored_triples[:triple_cap]
         
         # Format triples and extract chunk IDs
         formatted_triples = self._format_scored_triples(limited_scored_triples)
@@ -2785,7 +2820,7 @@ class KTRetriever:
                 
                 final_score = max(0.0, similarity + relation_bonus)
                 
-                if final_score > 0.05:
+                if final_score > 0.15:
                     scored_triples.append((h, r, t, final_score))
                                         
         except Exception as e:
@@ -2821,7 +2856,7 @@ class KTRetriever:
                 
                 final_score = max(0.0, similarity + relation_bonus)
                 
-                if final_score > 0.05:
+                if final_score > 0.15:
                     scored_triples.append((h, r, t, final_score))
                     
             except Exception as e:
@@ -3453,31 +3488,32 @@ class KTRetriever:
             if not chunk_ids or not chunk_contents:
                 return chunk_results
             
+            # Batch-encode all chunk texts at once for speed (vs per-chunk encode)
             chunk_similarities = []
-            for i, (chunk_id, content) in enumerate(zip(chunk_ids, chunk_contents)):
-                try:
-                    prepared_text, original_length, processed_length = self._prepare_chunk_text_for_embedding(content)
-                    if processed_length < original_length:
-                        logger.debug(
-                            "Chunk rerank truncated text for chunk %s: %d -> %d chars",
-                            chunk_id,
-                            original_length,
-                            processed_length,
-                        )
-                    chunk_embed = torch.tensor(self.qa_encoder.encode(prepared_text)).float().to(self.device)
-                    
-                    similarity = F.cosine_similarity(question_embed, chunk_embed, dim=0).item()
-                    similarity = max(0.0, similarity)  # Ensure non-negative
-                    
-                    faiss_score = original_scores[i] if i < len(original_scores) else 0.0
-                    combined_score = (faiss_score + similarity) / 2.0  # Average of both scores
-                    
-                    chunk_similarities.append((chunk_id, content, combined_score, i))
-                    
-                except Exception as e:
-                    logger.error(f"Error calculating similarity for chunk {chunk_id}: {str(e)}")
-                    faiss_score = original_scores[i] if i < len(original_scores) else 0.0
-                    chunk_similarities.append((chunk_id, content, faiss_score, i))
+            prepared_texts = []
+            for chunk_id, chunk_content in zip(chunk_ids, chunk_contents):
+                prepared_text, _, _ = self._prepare_chunk_text_for_embedding(chunk_content)
+                prepared_texts.append(prepared_text)
+            try:
+                batch_embeds = self.qa_encoder.encode(prepared_texts, convert_to_tensor=True).to(self.device)
+                # Compute all similarities at once
+                q_exp = question_embed.unsqueeze(0) if question_embed.dim() == 1 else question_embed
+                similarities = F.cosine_similarity(q_exp, batch_embeds, dim=1).tolist()
+            except Exception as e_batch:
+                logger.warning(f"Batch chunk encode failed ({e_batch}), falling back to individual encode")
+                similarities = []
+                for pt in prepared_texts:
+                    try:
+                        ce = torch.tensor(self.qa_encoder.encode(pt)).float().to(self.device)
+                        similarities.append(max(0.0, F.cosine_similarity(question_embed, ce, dim=0).item()))
+                    except Exception:
+                        similarities.append(0.0)
+            for i, (chunk_id, chunk_content) in enumerate(zip(chunk_ids, chunk_contents)):
+                sem_sim = max(0.0, similarities[i] if i < len(similarities) else 0.0)
+                faiss_score = float(original_scores[i]) if i < len(original_scores) else 0.0
+                # 35% FAISS vector score + 65% semantic similarity (favour semantic precision)
+                combined_score = 0.35 * faiss_score + 0.65 * sem_sim
+                chunk_similarities.append((chunk_id, chunk_content, combined_score, i))
             
             chunk_similarities.sort(key=lambda x: x[2], reverse=True)
             

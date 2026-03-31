@@ -4,14 +4,39 @@ from typing import Dict, List, Optional, Callable
 
 from utils.logger import logger
 
+def _extract_char_keywords(text: str) -> List[str]:
+    """Extract meaningful substrings for Chinese/mixed text matching.
+    
+    Instead of splitting by spaces (which doesn't work for Chinese),
+    we use the full text and individual characters/words as matching units.
+    For Chinese: we use 2-4 character n-grams as keywords.
+    For Latin text: normal word splitting.
+    """
+    import re
+    keywords = []
+    # Extract CJK character sequences (2-4 chars)
+    cjk_seqs = re.findall(r'[\u4e00-\u9fff\u3400-\u4dbf]{2,4}', text)
+    keywords.extend(cjk_seqs)
+    # Extract Latin words (>1 char)
+    latin_words = re.findall(r'[a-zA-Z0-9]{2,}', text.lower())
+    keywords.extend(latin_words)
+    return list(set(keywords))
+
+
 def rerank_chunks_by_keywords(chunks: List[str], question: str, top_k: int) -> List[str]:
-    """Rerank chunks by keyword matching with the question."""
+    """Rerank chunks by keyword matching with the question.
+    
+    Uses character-level n-gram matching to support Chinese text,
+    since Chinese text cannot be split by spaces.
+    """
     if len(chunks) <= top_k:
         return chunks
     
-    question_keywords = set(question.lower().split())
-    scored_chunks = []
+    question_keywords = _extract_char_keywords(question)
+    if not question_keywords:
+        return chunks[:top_k]
     
+    scored_chunks = []
     for chunk in chunks:
         chunk_lower = chunk.lower()
         score = sum(1 for keyword in question_keywords if keyword in chunk_lower)
@@ -19,6 +44,47 @@ def rerank_chunks_by_keywords(chunks: List[str], question: str, top_k: int) -> L
     
     scored_chunks.sort(key=lambda x: x[1], reverse=True)
     return [scored_chunk[0] for scored_chunk in scored_chunks[:top_k]]
+
+
+def hybrid_rerank_triples(triples: List[str], question: str, top_k: int) -> List[str]:
+    """Rerank triples using both keyword matching and embedded vector scores.
+    
+    Each formatted triple string may contain a '[score: X.XXX]' suffix from
+    the retriever's cosine similarity. We parse that score and combine it
+    with a keyword-match score for a more accurate ranking.
+    
+    Args:
+        triples: List of formatted triple strings, optionally containing '[score: X]'
+        question: Original user question
+        top_k: Maximum number of triples to return
+    """
+    import re
+    if len(triples) <= top_k:
+        return triples
+    
+    q_keywords = _extract_char_keywords(question)
+    
+    scored = []
+    for triple in triples:
+        # Extract vector score embedded in triple string if present
+        vec_score = 0.0
+        score_match = re.search(r'\[score:\s*([0-9.]+)\]', triple)
+        if score_match:
+            try:
+                vec_score = float(score_match.group(1))
+            except ValueError:
+                pass
+        
+        # Keyword match score (normalised to ~[0, 1])
+        kw_hits = sum(1 for kw in q_keywords if kw in triple.lower()) if q_keywords else 0
+        kw_score = kw_hits / max(len(q_keywords), 1)
+        
+        # Combined: 60% vector similarity + 40% keyword match
+        combined = 0.6 * vec_score + 0.4 * kw_score
+        scored.append((triple, combined))
+    
+    scored.sort(key=lambda x: x[1], reverse=True)
+    return [t for t, _ in scored[:top_k]]
 
 def deduplicate_triples(triples: List[str]) -> List[str]:
     return list(dict.fromkeys(triples))
@@ -164,16 +230,8 @@ def initial_question_decomposition(graphq, kt_retriever, question: str, schema_p
         dedup_triples = ["No relevant information found"]
         dedup_chunk_contents = ["No relevant chunks found"]
 
-    if len(dedup_triples) > top_k: 
-        question_keywords = set(question.lower().split())
-        scored_triples = []
-        for triple in dedup_triples:
-            triple_lower = triple.lower()
-            score = sum(1 for keyword in question_keywords if keyword in triple_lower)
-            scored_triples.append((triple, score))
-
-        scored_triples.sort(key=lambda x: x[1], reverse=True)
-        dedup_triples = [triple for triple, score in scored_triples[:top_k]]
+    if len(dedup_triples) > top_k:
+        dedup_triples = hybrid_rerank_triples(dedup_triples, question, top_k)
 
     if len(dedup_chunk_contents) > top_k:
         dedup_chunk_contents = rerank_chunks_by_keywords(dedup_chunk_contents, question, top_k)
