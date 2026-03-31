@@ -990,19 +990,25 @@ body {
     color: var(--primary-2);
 }
 
+/* 参考文献区块样式美化 */
 .reference-section {
     margin-top: 24px;
-    padding-top: 18px;
-    border-top: 1px solid var(--border);
+    padding: 20px;
+    background: #f8fbff; /* 淡淡蓝色背景 */
+    border: 1px solid #dbeafe;
+    border-radius: 12px;
+    box-shadow: 0 2px 12px rgba(31, 95, 174, 0.04);
 }
 
 .reference-section h4 {
     font-size: 1.1rem;
-    color: var(--text);
-    margin-bottom: 14px;
+    color: #1f4f87;
+    margin-bottom: 16px;
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 10px;
+    border-bottom: 1px solid rgba(31, 95, 174, 0.1);
+    padding-bottom: 10px;
 }
 
 .reference-section h4::before {
@@ -1017,124 +1023,90 @@ body {
 .reference-list {
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 12px;
 }
 
 .reference-item {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 14px;
-    transition: all 0.2s ease;
-}
-
-.reference-item:target {
-    background: #f0f7ff;
-    border-color: var(--primary);
-    box-shadow: 0 0 0 4px rgba(31, 95, 174, 0.1);
+    background: #ffffff; /* 纯白色背景 */
+    border: 1px solid #e1e9f5;
+    border-radius: 8px;
+    padding: 16px;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    box-shadow: 0 1px 3px rgba(31, 95, 174, 0.05);
 }
 
 .reference-item:hover {
-    border-color: #b8cfee;
-    box-shadow: 0 4px 12px rgba(31, 95, 174, 0.06);
+    border-color: var(--primary);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 15px rgba(31, 95, 174, 0.1);
+}
+
+.reference-item.ref-cited {
+    border-left: 4px solid var(--primary);
 }
 
 .ref-header {
     display: flex;
-    gap: 10px;
+    gap: 12px;
     align-items: flex-start;
 }
 
 .ref-index {
-    background: var(--surface-soft);
+    background: #f0f7ff;
     color: var(--primary);
     font-weight: 700;
     font-size: 12px;
-    min-width: 26px;
-    height: 26px;
+    min-width: 28px;
+    height: 28px;
     display: flex;
     align-items: center;
     justify-content: center;
     border-radius: 6px;
-    border: 1px solid var(--border);
+    border: 1px solid #dbeafe;
+    flex-shrink: 0;
 }
 
-.ref-title,
 .ref-citation {
     font-weight: 500;
-    color: var(--text);
-    font-size: 0.93rem;
-    line-height: 1.55;
-    padding-top: 2px;
+    color: #334155;
+    font-size: 0.95rem;
+    line-height: 1.6;
     flex: 1;
 }
 
-.ref-body {
-    margin-top: 8px;
-    margin-left: 36px;
-}
-
-.ref-abstract {
-    font-size: 0.88rem;
-    color: var(--muted);
-    line-height: 1.55;
-}
-
-/* 点击引用后的高亮动画 */
-@keyframes refHighlight {
-    0%   { background: #dbeafe; border-color: var(--primary); box-shadow: 0 0 0 4px rgba(31, 95, 174, 0.18); }
-    60%  { background: #eff6ff; border-color: #7aadde; box-shadow: 0 0 0 2px rgba(31, 95, 174, 0.10); }
-    100% { background: var(--surface); border-color: var(--border); box-shadow: none; }
-}
-
-.reference-item.ref-highlight {
-    animation: refHighlight 2s ease forwards;
-}
-
-/* 参考文献区块位于子图可视化之后，增加区分感 */
-.reference-section {
-    margin-top: 28px;
-    padding: 16px 18px 18px;
-    background: linear-gradient(180deg, #f7fbff 0%, #f2f8ff 100%);
-    border: 1px solid #cde0f7;
-    border-radius: 12px;
+.ref-cited-badge {
+    background: #e0f2fe;
+    color: #0369a1;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 999px;
+    border: 1px solid #bae6fd;
+    margin-left: 8px;
+    white-space: nowrap;
 }
 
 /* 参考文献数量徽章 */
 .ref-count-badge {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
     background: var(--primary);
     color: #fff;
     font-size: 11px;
     font-weight: 700;
-    min-width: 20px;
-    height: 20px;
-    border-radius: 10px;
-    padding: 0 6px;
-    vertical-align: middle;
-    margin-left: 6px;
-}
-
-/* 已被回答引用的论文条目：左边框标记 */
-.reference-item.ref-cited {
-    border-left: 3px solid var(--primary);
-    background: #f5f9ff;
-}
-
-/* "已引用"小徽章 */
-.ref-cited-badge {
+    min-width: 22px;
+    height: 22px;
+    border-radius: 11px;
     display: inline-flex;
     align-items: center;
-    padding: 1px 7px;
-    border-radius: 999px;
-    font-size: 11px;
-    font-weight: 600;
-    background: rgba(31, 95, 174, 0.12);
-    color: var(--primary);
-    border: 1px solid rgba(31, 95, 174, 0.25);
-    margin-left: 8px;
-    white-space: nowrap;
-    flex-shrink: 0;
+    justify-content: center;
+    padding: 0 7px;
+}
+
+/* 点击引用后的高亮动画 */
+@keyframes refHighlight {
+    0%   { background: #eff6ff; border-color: var(--primary); transform: scale(1.02); }
+    100% { background: #ffffff; border-color: #e1e9f5; transform: scale(1); }
+}
+
+.reference-item.ref-highlight {
+    animation: refHighlight 2s ease forwards;
 }

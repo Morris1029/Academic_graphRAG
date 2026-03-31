@@ -1320,24 +1320,65 @@ function extractFirstSentence(text) {
 function displayAnswer(result) {
     console.log('displayAnswer called with result:', result);
     const answerContent = document.getElementById('answerContent');
-    if (answerContent) {
-        // Use the full answer and the detailed layout
-        const fullAnswer = result.answer || '';
+    const answerSection = document.getElementById('answerSection');
+    
+    // Remove old references wrapper if any
+    const oldRefs = document.getElementById('referencesContainerWrapper');
+    if (oldRefs) oldRefs.remove();
+
+    let processedAnswer = result.answer || '';
+    const papers = result.retrieved_papers || [];
+    let citedPapers = [];
+    
+    if (Array.isArray(papers) && papers.length > 0) {
+        const citedMatches = Array.from(processedAnswer.matchAll(/\[(\d+)\]/g));
+        const indexMap = new Map();
+        let nextIndex = 1;
         
+        citedMatches.forEach(m => {
+            const oldIdx = parseInt(m[1], 10);
+            if (!indexMap.has(oldIdx)) {
+                indexMap.set(oldIdx, nextIndex++);
+                const paper = papers.find(p => p.index === oldIdx);
+                if (paper) {
+                    citedPapers.push({...paper, index: indexMap.get(oldIdx)});
+                }
+            }
+        });
+        
+        processedAnswer = processedAnswer.replace(/\[(\d+)\]/g, (match, num) => {
+            const oldIdx = parseInt(num, 10);
+            return indexMap.has(oldIdx) ? `[${indexMap.get(oldIdx)}]` : match;
+        });
+    }
+
+    if (answerContent) {
         answerContent.className = 'answer-content answer-layout';
         answerContent.innerHTML = `
             <div class="answer-lead">
                 <div class="answer-section-title">${currentLang === 'zh' ? '综合回答' : 'Comprehensive Answer'}</div>
-                <div class="answer-lead-text">${renderSafeMarkdown(fullAnswer) || '<p></p>'}</div>
+                <div class="answer-lead-text">${renderSafeMarkdown(processedAnswer) || '<p></p>'}</div>
             </div>
         `;
     }
+    
     if (result.decompose_fallback) {
         showMessage((i18n[currentLang] || i18n.en).decomposeFallbackNotice, 'warning', 10000);
     }
 
     displayRetrievalDetails(result);
-    document.getElementById('answerSection').classList.remove('hidden');
+    answerSection.classList.remove('hidden');
+
+    if (citedPapers.length > 0) {
+        const citedSet = new Set(citedPapers.map(p => p.index));
+        const refsHtml = renderReferences(citedPapers, citedSet);
+        if (refsHtml) {
+            const refWrapper = document.createElement('div');
+            refWrapper.id = 'referencesContainerWrapper';
+            refWrapper.innerHTML = refsHtml;
+            answerSection.appendChild(refWrapper);
+        }
+    }
 }
 
 function filterKnowledgeGraphForQA(kg) {
@@ -1604,23 +1645,7 @@ function displayRetrievalDetails(result) {
     detailsHtml += '</div></div>';
     detailsContainer.innerHTML = detailsHtml;
 
-    // --- Render references AFTER innerHTML is set, as a separate append ---
-    const papers = result.retrieved_papers;
-    if (Array.isArray(papers) && papers.length > 0) {
-        // Parse all cited indices from the answer text [1], [2] etc.
-        const answerText = result.answer || '';
-        const citedSet = new Set();
-        const citedMatches = answerText.matchAll(/\[(\d+)\]/g);
-        for (const m of citedMatches) {
-            citedSet.add(parseInt(m[1], 10));
-        }
-        const refsHtml = renderReferences(papers, citedSet);
-        if (refsHtml) {
-            const refDiv = document.createElement('div');
-            refDiv.innerHTML = refsHtml;
-            detailsContainer.appendChild(refDiv);
-        }
-    }
+    // References are now rendered dynamically alongside answer in displayAnswer
 
     // Render retrieval subgraph after setting HTML and ensuring container is visible
     setTimeout(() => {
