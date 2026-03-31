@@ -2444,8 +2444,10 @@ class KTRetriever:
             
             sub_result = {
                 'sub_question': sub_question_text,
+                'triples': triples[:10],
                 'triples_count': len(triples),
                 'chunk_ids_count': len(chunk_ids),
+                'chunk_contents': chunk_contents_list[:5],
                 'time_taken': time_taken
             }
             
