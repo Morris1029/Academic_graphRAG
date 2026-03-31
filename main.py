@@ -66,7 +66,7 @@ def merge_chunk_contents(chunk_ids, chunk_contents_dict):
 
 def parse_arguments():
     """Parse command line arguments."""
-    parser = argparse.ArgumentParser(description="Youtu-GraphRAG Framework")
+    parser = argparse.ArgumentParser(description="Academic-GraphRAG Framework")
     parser.add_argument(
         "--config", 
         type=str, 
@@ -92,7 +92,7 @@ def setup_environment(config: ConfigManager):
     """Set up the environment based on configuration."""
     config.create_output_directories()
     
-    logger.info("Youtu-GraphRAG initialized")
+    logger.info("Academic-GraphRAG initialized")
     logger.info(f"Mode: {config.triggers.mode}")
     logger.info(f"Constructor enabled: {config.triggers.constructor_trigger}")
     logger.info(f"Retriever enabled: {config.triggers.retrieve_trigger}")
@@ -266,7 +266,7 @@ def agent_retrieval(graphq, kt_retriever, qa_pairs, schema_path):
 
 if __name__ == "__main__":
 
-    install_interrupt_guard("Youtu-GraphRAG CLI")
+    install_interrupt_guard("Academic-GraphRAG CLI")
     args = parse_arguments()
     config_path = args.config
     try:

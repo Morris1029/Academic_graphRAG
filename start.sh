@@ -1,6 +1,6 @@
 #!/bin/bash
 
-echo "🌟 Starting Youtu-GraphRAG Server..."
+echo "🌟 Starting Academic-GraphRAG Server..."
 echo "=========================================="
 
 
@@ -26,4 +26,4 @@ echo "=========================================="
 
 python backend.py
 
-echo "👋 Youtu-GraphRAG server stopped."
+echo "👋 Academic-GraphRAG server stopped."

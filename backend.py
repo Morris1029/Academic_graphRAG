@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Simple but Complete Youtu-GraphRAG Backend
+Simple but Complete Academic-GraphRAG Backend
 Integrates real GraphRAG functionality with a simple interface
 """
 
@@ -91,7 +91,7 @@ def dataset_chunk_path(dataset_name: str) -> str:
     return repo_str("output", "chunks", f"{dataset_name}.txt")
 
 
-app = FastAPI(title="Youtu-GraphRAG Unified Interface", version="1.0.0")
+app = FastAPI(title="Academic-GraphRAG Unified Interface", version="1.0.0")
 
 # Mount static files (assets directory)
 app.mount("/assets", StaticFiles(directory=str(ASSETS_DIR)), name="assets")
@@ -448,7 +448,7 @@ async def read_root():
     frontend_path = FRONTEND_INDEX_PATH
     if os.path.exists(frontend_path):
         return FileResponse(frontend_path)
-    return {"message": "Youtu-GraphRAG Unified Interface is running!", "status": "ok"}
+    return {"message": "Academic-GraphRAG Unified Interface is running!", "status": "ok"}
 
 
 @app.get("/style.css")
@@ -1786,11 +1786,11 @@ async def startup_event():
     os.makedirs(SCHEMAS_DIR, exist_ok=True)
     os.makedirs(FAISS_CACHE_ROOT, exist_ok=True)
 
-    logger.info("Youtu-GraphRAG Unified Interface initialized")
+    logger.info("Academic-GraphRAG Unified Interface initialized")
 
 
 if __name__ == "__main__":
-    install_interrupt_guard("Youtu-GraphRAG backend")
+    install_interrupt_guard("Academic-GraphRAG backend")
     try:
         uvicorn.run(app, host="0.0.0.0", port=8000)
     except KeyboardInterrupt:
