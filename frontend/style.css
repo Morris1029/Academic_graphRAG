@@ -1,4 +1,4 @@
-﻿:root {
+:root {
     --bg: #eef5ff;
     --surface: #ffffff;
     --surface-soft: #f6faff;
@@ -768,6 +768,184 @@ body {
     color: #194f94;
 }
 
+.retrieval-details {
+    border: 1px solid var(--border);
+    background: #f9fcff;
+    border-radius: 12px;
+    padding: 14px;
+    margin-top: 10px;
+}
+
+.retrieval-summary h4,
+.subquestions-section h4,
+.triples-section h4 {
+    margin-bottom: 8px;
+    color: var(--text);
+}
+
+.stats-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+    margin-bottom: 10px;
+}
+
+.stat-item {
+    border: 1px solid var(--border);
+    background: #fff;
+    border-radius: 8px;
+    padding: 8px;
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.stat-value {
+    font-weight: 700;
+    color: var(--primary);
+}
+
+.subquestion-item {
+    border: 1px solid var(--border);
+    background: #fff;
+    border-radius: 10px;
+    padding: 10px;
+    margin-bottom: 8px;
+}
+
+.subquestion-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.subquestion-number {
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--primary);
+    color: #fff;
+    font-size: 12px;
+}
+
+.subquestion-text {
+    font-weight: 600;
+    color: var(--text);
+}
+
+.subquestion-stats {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin: 8px 0;
+}
+
+.subquestion-stats span {
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 2px 8px;
+    font-size: 12px;
+    color: var(--muted);
+    background: #f9fcff;
+}
+
+.triples-preview {
+    border-top: 1px dashed #dbe8f8;
+    margin-top: 8px;
+    padding-top: 8px;
+}
+
+.triples-preview ul {
+    margin-left: 18px;
+}
+
+.triples-preview li {
+    margin-bottom: 3px;
+    color: #37557a;
+    font-size: 13px;
+}
+
+.more-indicator {
+    color: var(--primary);
+    font-size: 12px;
+    cursor: pointer;
+}
+
+.no-data {
+    color: var(--muted);
+    font-style: italic;
+}
+
+.triples-chart-container {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+}
+
+.triples-summary {
+    border-top: 1px solid #d6e4f6;
+    background: #f6faff;
+    color: #466183;
+    padding: 8px;
+    text-align: center;
+}
+
+.qa-action-row {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
+.completion-badge {
+    padding: 5px 10px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 700;
+    color: #0f5e36;
+    border: 1px solid #8ad4ad;
+    background: #e7f8ef;
+}
+
+#qaMessages {
+    text-align: left;
+}
+
+.message {
+    border-radius: 8px;
+    padding: 8px 10px;
+    margin: 8px 0;
+    font-size: 13px;
+}
+
+.message.success {
+    background: #e8f8ef;
+    border: 1px solid #a8dfc2;
+    color: #11653b;
+}
+
+.message.success-bright {
+    background: #dff3e8;
+    border: 1px solid #8ad4ad;
+    color: #0d5e36;
+    font-weight: 700;
+}
+
+.message.error {
+    background: #fdeeee;
+    border: 1px solid #efbcbc;
+    color: #9e2d2d;
+}
+
+.message.info {
+    background: #edf4ff;
+    border: 1px solid #c6daf6;
+    color: #194f94;
+}
+
 .hidden {
     display: none !important;
 }
@@ -778,39 +956,185 @@ body {
     .research-grid {
         grid-template-columns: repeat(2, minmax(0, 1fr));
     }
-
-    .tabs {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
 }
 
 @media (max-width: 640px) {
     .container {
         padding: 12px;
     }
-
-    .header,
-    .card {
+    .header, .card {
         padding: 14px;
     }
-
-    .logo-container {
-        align-items: flex-start;
-    }
-
-    .project-title {
-        font-size: 1.1rem;
-    }
-
-    .tabs,
-    .grid,
-    .quick-actions,
-    .research-grid,
-    .stats-grid {
+    .grid, .quick-actions, .research-grid, .stats-grid {
         grid-template-columns: 1fr;
     }
-
     .chart-container {
         height: 360px;
     }
+}
+
+/* Citations and References */
+.citation {
+    color: var(--primary);
+    font-size: 0.82em;
+    vertical-align: super;
+    text-decoration: none;
+    font-weight: 700;
+    margin: 0 2px;
+    padding: 0 2px;
+    transition: color 0.2s ease;
+}
+
+.citation:hover {
+    text-decoration: underline;
+    color: var(--primary-2);
+}
+
+.reference-section {
+    margin-top: 24px;
+    padding-top: 18px;
+    border-top: 1px solid var(--border);
+}
+
+.reference-section h4 {
+    font-size: 1.1rem;
+    color: var(--text);
+    margin-bottom: 14px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.reference-section h4::before {
+    content: "";
+    display: inline-block;
+    width: 4px;
+    height: 18px;
+    background: var(--primary);
+    border-radius: 2px;
+}
+
+.reference-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.reference-item {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px;
+    transition: all 0.2s ease;
+}
+
+.reference-item:target {
+    background: #f0f7ff;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 4px rgba(31, 95, 174, 0.1);
+}
+
+.reference-item:hover {
+    border-color: #b8cfee;
+    box-shadow: 0 4px 12px rgba(31, 95, 174, 0.06);
+}
+
+.ref-header {
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+}
+
+.ref-index {
+    background: var(--surface-soft);
+    color: var(--primary);
+    font-weight: 700;
+    font-size: 12px;
+    min-width: 26px;
+    height: 26px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+}
+
+.ref-title,
+.ref-citation {
+    font-weight: 500;
+    color: var(--text);
+    font-size: 0.93rem;
+    line-height: 1.55;
+    padding-top: 2px;
+    flex: 1;
+}
+
+.ref-body {
+    margin-top: 8px;
+    margin-left: 36px;
+}
+
+.ref-abstract {
+    font-size: 0.88rem;
+    color: var(--muted);
+    line-height: 1.55;
+}
+
+/* 点击引用后的高亮动画 */
+@keyframes refHighlight {
+    0%   { background: #dbeafe; border-color: var(--primary); box-shadow: 0 0 0 4px rgba(31, 95, 174, 0.18); }
+    60%  { background: #eff6ff; border-color: #7aadde; box-shadow: 0 0 0 2px rgba(31, 95, 174, 0.10); }
+    100% { background: var(--surface); border-color: var(--border); box-shadow: none; }
+}
+
+.reference-item.ref-highlight {
+    animation: refHighlight 2s ease forwards;
+}
+
+/* 参考文献区块位于子图可视化之后，增加区分感 */
+.reference-section {
+    margin-top: 28px;
+    padding: 16px 18px 18px;
+    background: linear-gradient(180deg, #f7fbff 0%, #f2f8ff 100%);
+    border: 1px solid #cde0f7;
+    border-radius: 12px;
+}
+
+/* 参考文献数量徽章 */
+.ref-count-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--primary);
+    color: #fff;
+    font-size: 11px;
+    font-weight: 700;
+    min-width: 20px;
+    height: 20px;
+    border-radius: 10px;
+    padding: 0 6px;
+    vertical-align: middle;
+    margin-left: 6px;
+}
+
+/* 已被回答引用的论文条目：左边框标记 */
+.reference-item.ref-cited {
+    border-left: 3px solid var(--primary);
+    background: #f5f9ff;
+}
+
+/* "已引用"小徽章 */
+.ref-cited-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 1px 7px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 600;
+    background: rgba(31, 95, 174, 0.12);
+    color: var(--primary);
+    border: 1px solid rgba(31, 95, 174, 0.25);
+    margin-left: 8px;
+    white-space: nowrap;
+    flex-shrink: 0;
 }

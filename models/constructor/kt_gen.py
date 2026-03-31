@@ -247,15 +247,20 @@ class KTBuilder:
     def chunk_text(self, doc: Dict) -> Tuple[List[Dict], Dict[str, Dict]]:
         """
         处理论文 JSON 结构。
-        Chunk 保存逻辑：仅保留 Title + Abstract，用于检索。
+        Chunk 保存逻辑：仅保留 Title + Abstract 用于 Embedding 检索，
+        元数据（作者/期刊/年份）保存在 meta 字典中，不混入 embedding 文本避免噪音。
         """
         source_doc_id = str(doc.get("id", nanoid.generate(size=8)))
         doc_id = self._get_document_uid(doc)
 
         meta = dict(self._get_doc_meta(doc))
-        title = meta.get("title", "")
+        title    = meta.get("title", "")
         abstract = meta.get("abstract", "")
+
+        # 仅将 Title + Abstract 写入 chunk 文本，供 embedding 使用
+        # Authors/Source/Year 保存在 meta 中，不入 embedding
         chunk_content_text = f"Title: {title}\nAbstract: {abstract}"
+
         meta["source_doc_id"] = source_doc_id
         meta["doc_uid"] = doc_id
 

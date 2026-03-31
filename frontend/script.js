@@ -1120,30 +1120,36 @@ async function askQuestion() {
     }
 }
 
-function displayAnswer(result) {
-    console.log('displayAnswer called with result:', result);
-    const answerContent = document.getElementById('answerContent');
-    if (answerContent) {
-        const answerLead = buildAnswerLead(result);
-        const chunkExplanation = buildChunkExplanation(result, answerLead);
-        const reasoningSummary = buildReasoningSummary(result, answerLead, chunkExplanation);
-        answerContent.className = 'answer-content answer-layout';
-        answerContent.innerHTML = `
-            <div class="answer-lead">
-                <div class="answer-section-title">${currentLang === 'zh' ? '综合回答' : 'Comprehensive Answer'}</div>
-                <div class="answer-lead-text">${renderSafeMarkdown(answerLead || '') || '<p></p>'}</div>
-            </div>
-            ${renderChunkExplanation(chunkExplanation)}
-            ${reasoningSummary}
-        `;
-    }
-    if (result.decompose_fallback) {
-        showMessage((i18n[currentLang] || i18n.en).decomposeFallbackNotice, 'warning', 10000);
+// displayAnswer 的主版本在后面定义，此处已移除重复版本
+
+/**
+ * 点击引用 [N] 后，平滑滚动到参考文献区的对应条目并高亮
+ */
+function scrollToReference(index) {
+    const targetId = 'ref-' + index;
+    const targetEl = document.getElementById(targetId);
+    if (!targetEl) {
+        // 如果目标不存在（该篇论文未在引用中），给用户友好提示
+        const refSection = document.querySelector('.reference-section');
+        if (refSection) {
+            refSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+        return;
     }
 
-    displayRetrievalDetails(result);
+    // 平滑滚动到目标元素
+    targetEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
 
-    document.getElementById('answerSection').classList.remove('hidden');
+    // 高亮效果：先移除已有高亮，再添加新的
+    document.querySelectorAll('.reference-item.ref-highlight').forEach(el => {
+        el.classList.remove('ref-highlight');
+    });
+    targetEl.classList.add('ref-highlight');
+
+    // 2秒后自动移除高亮
+    setTimeout(() => {
+        targetEl.classList.remove('ref-highlight');
+    }, 2000);
 }
 
 function escapeHtml(text) {
@@ -1160,6 +1166,8 @@ function renderInlineMarkdown(escapedText) {
     html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
     html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
     html = html.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+    // 引用链接：使用 onclick 平滑滚动，而非原生锚点（SPA 页面中原生锚点可能因嵌套滚动而失效）
+    html = html.replace(/\[(\d+)\]/g, '<a href="javascript:void(0)" class="citation" onclick="scrollToReference($1)">[$1]</a>');
     return html;
 }
 
@@ -1538,17 +1546,7 @@ function buildReasoningSummary(result, answerLead, chunkExplanation) {
     `;
 }
 
-function trimTrailingPunctuation(text) {
-    return String(text || '').replace(/[。！？!?,，；;:\s]+$/g, '').trim();
-}
-
-function buildCombinedAnswerText(answerLead, chunkExplanation) {
-    const lead = String(answerLead || '').trim();
-    const summary = String(chunkExplanation?.summary || '').trim();
-    if (!lead) return summary;
-    if (!summary) return lead;
-    return `${trimTrailingPunctuation(lead)}。${summary}`;
-}
+// trimTrailingPunctuation 和 buildCombinedAnswerText 的正式版本在后面定义，此处为过时版本已移除
 
 // Override the earlier answer renderer: keep a single compact answer block.
 function displayAnswer(result) {
@@ -1848,10 +1846,30 @@ function displayRetrievalDetails(result) {
                 <p>${t.retrievedTriplesSummary(result.retrieved_triples?.length || 0)}</p>
             </div>
         </div>
+        
+        ${/* references rendered separately after innerHTML set */''}  
     `;
 
     detailsHtml += '</div></div>';
     detailsContainer.innerHTML = detailsHtml;
+
+    // --- Render references AFTER innerHTML is set, as a separate append ---
+    const papers = result.retrieved_papers;
+    if (Array.isArray(papers) && papers.length > 0) {
+        // Parse all cited indices from the answer text [1], [2] etc.
+        const answerText = result.answer || '';
+        const citedSet = new Set();
+        const citedMatches = answerText.matchAll(/\[(\d+)\]/g);
+        for (const m of citedMatches) {
+            citedSet.add(parseInt(m[1], 10));
+        }
+        const refsHtml = renderReferences(papers, citedSet);
+        if (refsHtml) {
+            const refDiv = document.createElement('div');
+            refDiv.innerHTML = refsHtml;
+            detailsContainer.appendChild(refDiv);
+        }
+    }
 
     // Render retrieval subgraph after setting HTML and ensuring container is visible
     setTimeout(() => {
@@ -2254,4 +2272,68 @@ window.toggleHiddenList = function(id, btn, kind = 'triples') {
 // Backward compatibility for previous inline handlers.
 window.toggleHiddenTriples = function(id, btn) {
     window.toggleHiddenList(id, btn, 'triples');
+}
+function renderReferences(papers, citedIndices) {
+    if (!papers || !Array.isArray(papers) || papers.length === 0) return '';
+    const sectionTitle = currentLang === 'zh' ? '参考文献' : 'References';
+    const citedLabel   = currentLang === 'zh' ? '已引用' : 'Cited';
+
+    /**
+     * 按 GB/T 7714 格式拼接引文字符串
+     * 格式：作者. 标题[J]. 期刊名, 年份.
+     */
+    function formatCitation(paper) {
+        const parts = [];
+
+        // 作者
+        const authors = (paper.authors || '').trim();
+        if (authors) parts.push(escapeHtml(authors));
+
+        // 标题 + 文献类型标志
+        const title = (paper.title || '').trim();
+        if (title) {
+            parts.push(escapeHtml(title) + '[J]');
+        }
+
+        // 期刊名
+        const source = (paper.source || '').trim();
+        // 年份
+        const year = (paper.year || '').trim();
+
+        let sourceYearStr = '';
+        if (source && year) {
+            sourceYearStr = `${escapeHtml(source)}, ${escapeHtml(year)}`;
+        } else if (source) {
+            sourceYearStr = escapeHtml(source);
+        } else if (year) {
+            sourceYearStr = escapeHtml(year);
+        }
+        if (sourceYearStr) parts.push(sourceYearStr);
+
+        return parts.join('. ') + (parts.length ? '.' : '');
+    }
+
+    const items = papers.map(paper => {
+        const isCited = citedIndices instanceof Set && citedIndices.has(paper.index);
+        const citationStr = formatCitation(paper);
+
+        return `
+            <div class="reference-item${isCited ? ' ref-cited' : ''}" id="ref-${paper.index}">
+                <div class="ref-header">
+                    <span class="ref-index">[${paper.index}]</span>
+                    <span class="ref-citation">${citationStr || escapeHtml(paper.title || 'Unknown')}</span>
+                    ${isCited ? `<span class="ref-cited-badge">${citedLabel}</span>` : ''}
+                </div>
+            </div>
+        `;
+    }).join('');
+
+    return `
+        <div class="reference-section">
+            <h4>${sectionTitle} <span class="ref-count-badge">${papers.length}</span></h4>
+            <div class="reference-list">
+                ${items}
+            </div>
+        </div>
+    `;
 }

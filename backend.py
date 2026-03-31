@@ -12,8 +12,9 @@ import asyncio
 import glob
 import shutil
 from collections import Counter
-from typing import List, Dict, Optional
 from datetime import datetime
+import traceback
+from typing import List, Dict, Optional, Any
 
 # Add project root to path
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -282,14 +283,15 @@ class QuestionRequest(BaseModel):
 
 class QuestionResponse(BaseModel):
     answer: str
-    sub_questions: List[Dict]
+    sub_questions: List[Dict[str, Any]]
     retrieved_triples: List[str]
     retrieved_chunks: List[str]
-    reasoning_steps: List[Dict]
-    visualization_data: Dict
+    reasoning_steps: List[Dict[str, Any]]
+    visualization_data: Dict[str, Any]
     decompose_fallback: bool = False
     decompose_error: Optional[str] = None
     schema_path_used: Optional[str] = None
+    retrieved_papers: List[Dict[str, Any]] = []
 
 
 def ensure_demo_schema_exists() -> str:
@@ -1171,6 +1173,43 @@ async def ask_question(request: QuestionRequest, client_id: str = "default"):
         reasoning_steps = result['reasoning_steps']
         decompose_fallback = result['decompose_fallback']
         decompose_error = result['decompose_error']
+        retrieved_papers = result.get('retrieved_papers', [])
+
+        # --- 元数据增强：从 chunk audit 文件补充 authors/source/year ---
+        # chunk audit 文件保存了完整的文献元数据，且不污染 embedding 文本
+        if retrieved_papers:
+            try:
+                chunk_audit_path = os.path.join(
+                    "output", "chunks", f"{dataset_name}_chunk_audit.jsonl"
+                )
+                # 构建 title → meta 查找表（大小写不敏感）
+                title_meta_lookup: dict = {}
+                if os.path.exists(chunk_audit_path):
+                    with open(chunk_audit_path, "r", encoding="utf-8") as _f:
+                        for _line in _f:
+                            _line = _line.strip()
+                            if not _line:
+                                continue
+                            try:
+                                _rec = json.loads(_line)
+                                _title_key = str(_rec.get("title", "")).strip().lower()
+                                if _title_key:
+                                    title_meta_lookup[_title_key] = {
+                                        "authors": str(_rec.get("authors", "")).strip(),
+                                        "source":  str(_rec.get("source",  "")).strip(),
+                                        "year":    str(_rec.get("year",    "")).strip(),
+                                    }
+                            except Exception:
+                                continue
+                # 按 title 注入元数据
+                for paper in retrieved_papers:
+                    key = str(paper.get("title", "")).strip().lower()
+                    meta_hit = title_meta_lookup.get(key, {})
+                    paper["authors"] = meta_hit.get("authors", paper.get("authors", ""))
+                    paper["source"]  = meta_hit.get("source",  paper.get("source",  ""))
+                    paper["year"]    = meta_hit.get("year",    paper.get("year",    ""))
+            except Exception as _meta_err:
+                logger.warning(f"Could not enrich paper metadata from audit file: {_meta_err}")
 
         await send_progress_update(client_id, "retrieval", 100, "Answer generation completed!")
 
@@ -1208,9 +1247,12 @@ async def ask_question(request: QuestionRequest, client_id: str = "default"):
             visualization_data=visualization_data,
             decompose_fallback=decompose_fallback,
             decompose_error=decompose_error,
-            schema_path_used=schema_path
+            schema_path_used=schema_path,
+            retrieved_papers=retrieved_papers
         )
     except Exception as e:
+        logger.error(f"Error in ask_question: {str(e)}")
+        logger.error(traceback.format_exc())
         await send_progress_update(client_id, "retrieval", 0, f"Question answering failed: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 

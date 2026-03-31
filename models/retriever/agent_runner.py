@@ -23,6 +23,53 @@ def _extract_char_keywords(text: str) -> List[str]:
     return list(set(keywords))
 
 
+def cluster_chunks_by_paper(chunks: List[str]) -> tuple:
+    """Cluster chunks by their paper title and assign an index.
+    
+    Only groups chunks by title — metadata enrichment (authors, source, year)
+    is done downstream (in backend.py) using the chunk audit file,
+    so that the embedding text remains clean and free of structured metadata noise.
+
+    Returns:
+        tuple: (paper_list: List[dict], context_str: str)
+    """
+    import re
+    paper_map = {}
+    ordered_papers = []
+    
+    for chunk in chunks:
+        # Extract title from chunk string (Title + Abstract format)
+        title_match = re.search(r'Title:\s*(.*?)(?:\n|\\n|Abstract:|$)', chunk, re.IGNORECASE)
+        title = title_match.group(1).strip() if title_match else "Unknown Paper"
+        
+        if title not in paper_map:
+            paper_map[title] = []
+            ordered_papers.append(title)
+        
+        if chunk not in paper_map[title]:
+            paper_map[title].append(chunk)
+    
+    paper_list = []
+    context_str = ""
+    for i, title in enumerate(ordered_papers):
+        paper_index = i + 1
+        paper_info = {
+            "index":   paper_index,
+            "title":   title,
+            "authors": "",   # enriched later via chunk audit file in backend
+            "source":  "",
+            "year":    "",
+            "chunks":  paper_map[title]
+        }
+        paper_list.append(paper_info)
+        
+        context_str += f"\n论文 [{paper_index}]: {title}\n"
+        for chunk_content in paper_map[title]:
+            context_str += f"内容: {chunk_content}\n"
+            
+    return paper_list, context_str
+
+
 def rerank_chunks_by_keywords(chunks: List[str], question: str, top_k: int) -> List[str]:
     """Rerank chunks by keyword matching with the question.
     
@@ -236,22 +283,23 @@ def initial_question_decomposition(graphq, kt_retriever, question: str, schema_p
     if len(dedup_chunk_contents) > top_k:
         dedup_chunk_contents = rerank_chunks_by_keywords(dedup_chunk_contents, question, top_k)
 
+    paper_list, chunks_context = cluster_chunks_by_paper(dedup_chunk_contents)
     context = "=== Triples ===\n" + "\n".join(dedup_triples)
-    context += "\n=== Chunks ===\n" + "\n".join(dedup_chunk_contents)
+    context += "\n=== Chunks ===\n" + chunks_context
 
     prompt = kt_retriever.generate_prompt(question, context)
 
     max_retries = 3
-    initial_answer = None
+    answer = None
     for retry in range(max_retries):
         try:
-            initial_answer = kt_retriever.generate_answer(prompt)
-            if initial_answer and initial_answer.strip():
+            answer = kt_retriever.generate_answer(prompt)
+            if answer and answer.strip():
                 break
         except Exception as e:
             logger.error(f"Error generating answer (attempt {retry + 1}): {str(e)}")
             if retry == max_retries - 1:
-                initial_answer = f"Error: Unable to generate answer - {str(e)}"
+                answer = f"Error: Unable to generate answer - {str(e)}"
             time.sleep(1)
 
     return {
@@ -262,13 +310,14 @@ def initial_question_decomposition(graphq, kt_retriever, question: str, schema_p
         'chunk_ids': dedup_chunk_ids,
         'chunk_contents': dedup_chunk_contents,
         'sub_question_results': all_sub_question_results,
-        'initial_answer': initial_answer,
+        'answer': answer,
         'total_time': total_time,
         'decompose_fallback': decompose_fallback,
         'decompose_error': decompose_error,
         'all_chunk_contents_dict': all_chunk_contents,
+        'all_chunk_ids_set': all_chunk_ids,
         'all_triples_set': all_triples,
-        'all_chunk_ids_set': all_chunk_ids
+        'retrieved_papers': paper_list
     }
 
 def run_agent_retrieval(graphq, kt_retriever, question: str, schema_path: str, max_steps: int, top_k: int, callback: Callable = None) -> dict:
@@ -292,7 +341,7 @@ def run_agent_retrieval(graphq, kt_retriever, question: str, schema_path: str, m
     reasoning_steps = list(initial_result['sub_question_results'])
     
     # Use full initial answer without truncation in thoughts
-    initial_thought = f"Initial analysis: {initial_result['initial_answer']}"
+    initial_thought = f"Initial analysis: {initial_result['answer']}"
     thoughts.append(initial_thought)
     
     if callback:
@@ -300,7 +349,7 @@ def run_agent_retrieval(graphq, kt_retriever, question: str, schema_path: str, m
         callback("ircot_start", message="Starting iterative reasoning")
         
     current_query = question
-    final_answer = initial_result['initial_answer']
+    final_answer = initial_result['answer']
     
     for step in range(1, max_steps + 1):
         logger.info(f"IRCoT Step {step}/{max_steps}")
@@ -309,8 +358,9 @@ def run_agent_retrieval(graphq, kt_retriever, question: str, schema_path: str, m
         dedup_chunk_ids = list(dict.fromkeys(all_chunk_ids))
         dedup_chunk_contents = merge_chunk_contents(dedup_chunk_ids, all_chunk_contents)
         
+        paper_list, chunks_context = cluster_chunks_by_paper(dedup_chunk_contents[:10])
         context = "=== Triples ===\n" + "\n".join(dedup_triples[:20]) # Limit context length to avoid token explosion
-        context += "\n=== Chunks ===\n" + "\n".join(dedup_chunk_contents[:10])
+        context += "\n=== Chunks ===\n" + chunks_context
         
         ircot_prompt = f"""
 You are an expert knowledge assistant using iterative retrieval with chain-of-thought reasoning.
@@ -418,8 +468,9 @@ Your reasoning:
     if callback:
         callback("retrieval_progress", progress=95, message="Synthesizing final answer...")
 
+    paper_list, chunks_context = cluster_chunks_by_paper(final_chunk_contents)
     final_context = "=== Final Triples ===\n" + "\n".join(final_triples)
-    final_context += "\n=== Final Chunks ===\n" + "\n".join(final_chunk_contents)
+    final_context += "\n=== Final Chunks ===\n" + chunks_context
     
     final_prompt = kt_retriever.generate_prompt(question, final_context)
     
@@ -448,5 +499,6 @@ Your reasoning:
         'decompose_fallback': initial_result.get('decompose_fallback', False),
         'decompose_error': initial_result.get('decompose_error'),
         'total_time': total_time,
-        'thoughts': thoughts
+        'thoughts': thoughts,
+        'retrieved_papers': paper_list
     }
