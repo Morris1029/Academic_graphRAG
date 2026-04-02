@@ -2118,7 +2118,7 @@ class KTRetriever:
             head_text = self._get_node_display_name(h)
             tail_text = self._get_node_display_name(t)
             
-            if not head_text or not tail_text or head_text.startswith('[Error') or tail_text.startswith('[Error'):
+            if not head_text or not tail_text or head_text.startswith('[Error') or tail_text.startswith('[Error') or head_text.startswith('[Unknown') or tail_text.startswith('[Unknown'):
                 continue
                 
             head_props = self._get_node_properties(h)

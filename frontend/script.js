@@ -1468,12 +1468,36 @@ function displayRetrievalDetails(result) {
         const out = [];
         for (const t of arr) {
             if (typeof t !== 'string') continue;
-            const m = t.match(/\(([^,]+),\s*([^,]+),\s*([^\)]+)\)/);
-            if (!m) continue;
-            const key = m.slice(1).map(x => x.trim().toLowerCase()).join('|');
+            let inner = t.trim();
+            inner = inner.replace(/\s*\[score:[^\]]+\]$/, '');
+            if (inner.startsWith('(') && inner.endsWith(')')) {
+                inner = inner.substring(1, inner.length - 1);
+            }
+            const rx = /^(.*?)(?:\s*(\[[^\]]+\]))?,\s*([^,\[\]]+),\s*(.*?)(?:\s*(\[[^\]]+\]))?$/;
+            const m = inner.match(rx);
+            if (!m) {
+                if (!seen.has(inner)) {
+                    seen.add(inner);
+                    out.push(escapeHtml(inner));
+                }
+                continue;
+            }
+            const key = [m[1], m[3], m[4]].map(x => (x||'').trim().toLowerCase()).join('|');
             if (!seen.has(key)) {
                 seen.add(key);
-                out.push(`(${m[1].trim()}, ${m[2].trim()}, ${m[3].trim()})`);
+                let s_name = escapeHtml(m[1].trim());
+                let s_props = m[2] ? escapeHtml(m[2].trim()) : '';
+                let rel = escapeHtml(m[3].trim());
+                let o_name = escapeHtml(m[4].trim());
+                let o_props = m[5] ? escapeHtml(m[5].trim()) : '';
+                
+                if (rel === 'has_attribute') rel = '属性是';
+                
+                let s_html = s_props ? `<span title="${s_props}" style="cursor: help; border-bottom: 1px dotted #888;">${s_name}</span>` : `<span>${s_name}</span>`;
+                let o_html = o_props ? `<span title="${o_props}" style="cursor: help; border-bottom: 1px dotted #888;">${o_name}</span>` : `<span>${o_name}</span>`;
+                let r_html = `<span style="color: #3b82f6; margin: 0 4px;">- ${rel} -</span>`;
+                
+                out.push(`${s_html}${r_html}${o_html}`);
             }
         }
         return out;
@@ -1490,7 +1514,24 @@ function displayRetrievalDetails(result) {
             const key = normalized.toLowerCase();
             if (!seen.has(key)) {
                 seen.add(key);
-                out.push(normalized);
+                let cleaned = item.replace(/\\n/g, '\n').replace(/\r\n/g, '\n');
+                let titleMatch = cleaned.match(/Title:\s*(.*?)(?:\n|Abstract:)/i);
+                let title = '';
+                if (titleMatch) {
+                    title = titleMatch[1].trim();
+                    cleaned = cleaned.replace(titleMatch[0], '');
+                }
+                cleaned = cleaned.replace(/Abstract:\\s*/i, '').replace(/<正>\\s*/, '').trim();
+                let htmlStr = '';
+                if (title) {
+                    htmlStr = `<div style="margin-bottom: 4px;">
+                                   <span style="display:inline-block; font-weight: bold; color: #3b82f6; border: 1px solid #3b82f6; padding: 1px 4px; border-radius: 4px; margin-right: 6px; margin-bottom: 2px;">${escapeHtml(title)}</span>
+                                   <span>${escapeHtml(cleaned)}</span>
+                               </div>`;
+                } else {
+                    htmlStr = escapeHtml(cleaned);
+                }
+                out.push(htmlStr);
             }
         }
         return out;

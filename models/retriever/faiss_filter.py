@@ -172,15 +172,18 @@ class DualFAISSRetriever:
         """
         
         start_time = time.time()
-        scored_triples = self.retrieve_via_triples(query_emb, top_k)
+        scored_triples_raw = self.retrieve_via_triples(query_emb, top_k)
         
         triple_nodes = set()
-        for h, r, t, score in scored_triples:
-            triple_nodes.add(h)
-            triple_nodes.add(t)
+        scored_triples = []
+        for h, r, t, score in scored_triples_raw:
+            if h in self.graph.nodes and t in self.graph.nodes:
+                scored_triples.append((h, r, t, score))
+                triple_nodes.add(h)
+                triple_nodes.add(t)
         
-        # Filter out nodes that don't exist in the graph
-        triple_nodes = [node for node in triple_nodes if node in self.graph.nodes]
+        # Filter out nodes that don't exist in the graph (already filtered)
+        triple_nodes = list(triple_nodes)
                     
         end_time = time.time()
         logger.info(f"Time taken to get triple nodes: {end_time - start_time} seconds")
