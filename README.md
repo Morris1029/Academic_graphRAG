@@ -3,6 +3,10 @@
 ## 项目简介
 本项目是一个面向跨学科知识发现的 GraphRAG 研究原型系统，围绕论文《基于图检索增强生成的跨学科知识发现研究》展开实现。系统以科学文献为对象，通过“大语言模型知识抽取 + 知识图谱构建 + 图检索增强问答 + 评测分析”的完整链路，支持从非结构化学术文本中发现潜在的跨学科关联。
 
+<div align="center">
+  <img src="assets/frame.png" alt="项目整体框架概览">
+</div>
+
 当前仓库的实现重点，已经从通用 GraphRAG 框架进一步收敛到以下研究目标：
 
 - 面向跨学科科学文献构建结构化知识图谱
@@ -20,6 +24,14 @@
 
 当前研究样本以“大语言模型在教育领域中的应用研究”为主，因此你会在仓库中看到 `AIGC-EDU`、`AIGC-EDU-test` 等数据集，以及围绕它们组织的构图与评测结果。
 
+## 技术栈
+*   🐍 **Python**: 系统核心开发语言
+*   🚀 **FastAPI**: 高性能 Web 服务后端与 HTTP/WebSocket 接口
+*   🧠 **大语言模型 API**: 支持拆分集成的多模型调用（如 DeepSeek、Qwen 等）
+*   🕸️ **NetworkX**: 图结构数据的存储、处理与社区发现
+*   🔍 **FAISS**: 文本 Chunk 的局部特征向量检索引擎
+*   📊 **ECharts**: 前端界面的交互式知识图谱数据可视化
+
 ## 当前系统能力
 
 ### 1. 文献上传与数据集管理
@@ -29,6 +41,7 @@
 - 内置 `demo` 数据集，便于快速验证流程
 
 ### 2. 知识图谱构建
+![Schema 学术种子模式](assets/schema.png)
 - 主构图入口：`main.py` 与 `backend.py`
 - 核心构图模块：`models/constructor/kt_gen.py`
 - 支持基于 schema 的实体、关系、属性抽取
@@ -184,13 +197,29 @@ python main.py --datasets demo --override "{\"triggers\": {\"constructor_trigger
 ```
 
 ## Web 使用流程
+<div align="center">
+  <img src="assets/homepage.png" alt="前端系统首页概览">
+</div>
+
 当前前端界面主要支持以下流程：
 
 1. 上传文档并生成数据集
+<div align="center"><img src="assets/dataupload.png" alt="前端文档上传板块"></div>
+
 2. 为数据集上传自定义 schema（可选）
 3. 构建知识图谱
 4. 查看图谱可视化
+<div align="center"><img src="assets/Kgvisual.png" alt="前端图谱可视化模块"></div>
+
 5. 选择数据集进行研究问答
+<div align="center"><img src="assets/reseachQA.png" alt="前端研究问答面板"></div>
+
+**以下为部分问答示例：**
+<div align="center">
+  <img src="assets/answer1.png" alt="问答示例内容1">
+  <img src="assets/answer2.png" alt="问答示例内容2">
+</div>
+
 6. 对已有数据集执行重建或删除
 
 后端核心接口位于 `backend.py`，包括：
@@ -299,3 +328,8 @@ python backend.py
   - 复现实验表格
   - 典型问答案例
   - 论文引用与版本对应关系
+  
+## 贡献指南
+我们非常欢迎开源学术界和工业界生态伙伴的贡献。
+1. **Issue 报告**：若在体验过程中发现 Bug 或有新的需求建议，欢迎提交 Issue 进行讨论交流。
+2. **提交代码**：请 Fork 当前项目，切换到个人开发分支（如 `feature/your-feature`）进行实现，充分执行单测（请参考已有的测试脚本文件）后提交 Pull Request，管理员将尽快完成合并审查。
