@@ -1,352 +1,188 @@
-# 🚀 Youtu-GraphRAG Full Guide
+# 🚀 Academic GraphRAG 完整指南
 
 <div align="center">
   <img src="assets/logo.png" alt="Logo" width="100">
   
-  **Complete Guide from Installation to Usage**
+  **从安装到使用的完整指南：面向跨学科知识发现的 GraphRAG 研究原型**
   
-  [⬅️ Back to Home](README.md) | [🌐 返回中文主页](README-CN.md)
+  [⬅️ 返回主页](README.md) | [🌐 English Version](FULLGUIDE-EN.md)
 </div>
 
 ---
 
-## 📋 Table of Contents
-- <a href="#web-interface-quick-experience">💻 Web Interface Quick Experience</a>
-- <a href="#command-line-usage">🛠️ Command Line Usage</a>
-- <a href="#advanced-configuration">⚙️ Advanced Configuration</a>
-- <a href="#troubleshooting">🔧 Troubleshooting</a>
+## 📋 目录
+- <a href="#environment-preparation">⚙️ 环境准备</a>
+- <a href="#web-interface-experience">💻 Web 界面使用流程</a>
+- <a href="#command-line-usage">🛠️ 命令行使用（CLI）</a>
+- <a href="#evaluation-workflow">⚖️ 评测工作流</a>
+- <a href="#configuration-details">⚙️ 高级配置解析</a>
+- <a href="#troubleshooting">🔧 常见问题与优化</a>
 
 ---
 
-<a id="web-interface-quick-experience"></a>
-This approach relies on the Docker environment, which could be installed according to [official documentation](https://docs.docker.com/get-started/).
+<a id="environment-preparation"></a>
+## ⚙️ 环境准备
 
+本项目支持 Docker 部署与本地 Python 环境安装。推荐使用 **虚拟环境** 以避免依赖冲突。
+
+### 1. 基础安装 (本地)
 ```bash
-# 1. Clone Youtu-GraphRAG project
-git clone https://github.com/TencentCloudADP/youtu-graphrag
+# 克隆项目
+git clone https://github.com/Morris1029/Academic_graphRAG.git
+cd academic-graphrag
 
-# 2. Create .env according to .env.example
-cd youtu-graphrag && cp .env.example .env
-# Config your LLM api in .env as OpenAI API format
-# LLM_MODEL=deepseek-chat
-# LLM_BASE_URL=https://api.deepseek.com
-# LLM_API_KEY=sk-xxxxxx
+# 安装依赖
+pip install -r requirements.txt
+pip install -r requirements-server.txt
 
-# 3. Build with dockerfile 
-docker build -t youtu_graphrag:v1 .
-
-# 4. Docker run
-docker run -d -p 8000:8000 youtu_graphrag:v1
-
-# 5. Visit http://localhost:8000
-curl -v http://localhost:8000
+# 下载中文 NLP 模型 (学术文献处理核心)
+python -m spacy download zh_core_web_lg
 ```
 
-> **💡 Note:** If you encounter `Segmentation fault: 11` errors when building large-scale knowledge graphs, please refer to the <a href="#troubleshooting">Troubleshooting section</a> below.
+### 2. 核心环境变量配置 (`.env`)
+复制 `.env.example` 并重命名为 `.env`。项目支持按任务分配不同的 LLM 模型：
 
-### 3-Minute Experience Process
+```env
+# 通用默认配置
+LLM_MODEL=deepseek-chat
+LLM_BASE_URL=https://api.deepseek.com
+LLM_API_KEY=your_key
 
-#### 1️⃣ Try Demo Data Immediately
-- Go to **Query Panel** tab
-- Select **demo** dataset  
-- Enter demo query: *"When was the person who Messi's goals in Copa del Rey compared to get signed by Barcelona?"*
-- View detailed reasoning process and knowledge graph
+# 【高级】针对构建与问答单独配置 (推荐)
+KG_LLM_MODEL=qwen-max
+KG_LLM_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+KG_LLM_API_KEY=sk-xxxx
 
-#### 2️⃣ Upload Your Own Documents
-- Go to **Upload Documents** tab
-- Follow the JSON format example on the page
-- Drag and drop files to upload
+RAG_LLM_MODEL=deepseek-reasoner
+RAG_LLM_BASE_URL=https://api.deepseek.com
+RAG_LLM_API_KEY=sk-xxxx
+```
 
-#### 3️⃣ Build Knowledge Graph
-- Go to **Knowledge Tree Visualization** tab
-- Select dataset → Click **Construct Graph**
-- Watch real-time construction progress
+### 3. 多格式文档解析支持 (可选)
+如果需要处理 `.pdf`, `.docx`, `.doc` 等复杂格式，建议运行环境初始化脚本：
+```bash
+chmod +x setup_env.sh
+./setup_env.sh
+```
+*该脚本会自动检测并尝试安装 Java (提供 Tika 支持) 以及 Antiword (提供 .doc 支持)。*
 
-#### 4️⃣ Query
-- Return to **Query Panel** tab
-- Select the constructed dataset
-- Start natural language Q&A
-- Retrieval results visualization
+---
+
+<a id="web-interface-experience"></a>
+## 💻 Web 界面使用流程
+
+Web 界面提供了直观的交互方式，适合进行数据集管理和构图过程可视化。
+
+<div align="center">
+  <img src="assets/homepage.png" alt="首页概览">
+</div>
+
+### 启动服务
+```bash
+# 使用启动脚本
+chmod +x start.sh
+./start.sh
+# 或直接运行后端
+python backend.py
+```
+访问地址：`http://localhost:8000`
+
+### 核心操作步骤
+1.  **数据上传**：在“数据上传”标签页，您可以拖拽上传 `.pdf`, `.txt`, `.json` 等文档。系统会自动识别编码并进行格式化处理。
+    <div align="center"><img src="assets/dataupload.png" alt="数据上传面板"></div>
+2.  **Schema 定义**：默认为每个数据集关联通用学术 Schema。如有特殊需求，可在上传数据集后单独上传自定义 Schema。
+3.  **图谱构建**：在“图谱可视化”标签页点击“构建图谱”。由于构图涉及大量 LLM 调用，建议在 `base_config.yaml` 中根据 API 限流情况调整 `max_concurrent_llm_requests`。
+    <div align="center"><img src="assets/Kgvisual.png" alt="可视化构建"></div>
+4.  **研究问答**：进入“研究问答”界面，选择已构建的数据集。系统在 `agent` 模式下会自动拆解问题并进行多轮迭代检索。
+    <div align="center"><img src="assets/reseachQA.png" alt="问答面板"></div>
 
 ---
 
 <a id="command-line-usage"></a>
-## 🛠️ Command Line Usage
+## 🛠️ 命令行使用（CLI）
 
-### Environment Preparation with Docker
+CLI 适合执行批量任务或在服务器环境下运行。
+
+### 1. 全流程启动
 ```bash
-# 1. Clone Youtu-GraphRAG project
-git clone https://github.com/TencentCloudADP/youtu-graphrag
-
-# 2. Create .env according to .env.example
-cd youtu-graphrag && cp .env.example .env
-# Config your LLM api in .env as OpenAI API format
-# LLM_MODEL=deepseek-chat
-# LLM_BASE_URL=https://api.deepseek.com
-# LLM_API_KEY=sk-xxxxxx
-
-# 3. Build with dockerfile
-docker build -t youtu_graphrag:v1 .
-
-# 4. Docker run
-docker run -d -p 8000:8000 youtu_graphrag:v1
-```
-
-### Environment Preparation with Conda
-```bash
-# 1. Clone Youtu-GraphRAG project
-git clone https://github.com/TencentCloudADP/youtu-graphrag
-
-# 2. Create .env according to .env.example
-cd youtu-graphrag && cp .env.example .env
-# Config your LLM api in .env as OpenAI API format
-LLM_MODEL=deepseek-chat
-LLM_BASE_URL=https://api.deepseek.com
-LLM_API_KEY=sk-xxxxxx
-
-# 3. Create the conda environment.
-conda create -n YouTuGraphRAG python=3.10
-conda activate YouTuGraphRAG
-
-# 4. Setup environment
-# You can also use the bash ./setup_env.sh to do the same thing.
-chmod +x setup_env.sh
-./setup_env.sh
-
-# 5. Start the web server (for web interface)
-chmod +x start.sh
-./start.sh
-```
-
-### Basic Usage
-```bash
-# 1. Run with default configuration
+# 对 demo 数据集执行 构图 + 检索
 python main.py --datasets demo
-
-# 2. Specify multiple datasets
-python main.py --datasets hotpot 2wiki musique
-
-# 3. Use custom configuration file
-python main.py --config my_config.yaml --datasets demo
-
-# 4. Runtime parameter override
-python main.py --override '{"retrieval": {"top_k_filter": 50}, "triggers": {"mode": "noagent"}}' --datasets demo
 ```
 
-### Specialized Functions
+### 2. 行为自定义 (Override)
+您可以通过 `--override` 参数实时修改 `base_config.yaml` 中的任何配置：
 ```bash
-# 1. Build knowledge graph only
-python main.py --override '{"triggers": {"constructor_trigger": true, "retrieve_trigger": false}}' --datasets demo
+# 只构图，不检索 (关闭检索触发器)
+python main.py --datasets demo --override "{\"triggers\": {\"constructor_trigger\": true, \"retrieve_trigger\": false}}"
 
-# 2. Execute retrieval only (skip construction)
-python main.py --override '{"triggers": {"constructor_trigger": false, "retrieve_trigger": true}}' --datasets demo
-
-# 3. Performance optimization configuration
-python main.py --override '{"construction": {"max_workers": 64}, "embeddings": {"batch_size": 64}}' --datasets demo
+# 使用基础模式 (noagent) 以提升响应速度
+python main.py --datasets demo --override "{\"triggers\": {\"mode\": \"noagent\"}}"
 ```
 
 ---
 
-<a id="advanced-configuration"></a>
-## ⚙️ Advanced Configuration
+<a id="evaluation-workflow"></a>
+## ⚖️ 评测工作流
 
-### 🔧 Key Configuration Points
+作为研究原型，本项目提供了独立的评测框架，位于 `eval/` 目录下。
 
-| Configuration Category | Key Parameters | Description |
-|------------------------|----------------|-------------|
-| **🤖 Mode** | `triggers.mode` | agent(intelligent)/noagent(basic) |
-| **🏗️ Construction** | `construction.max_workers` | Graph construction concurrency |
-| **🔍 Retrieval** | `retrieval.top_k_filter`, `recall_paths` | Retrieval parameters |
-| **🧠 Agentic CoT** | `retrieval.agent.max_steps` | Iterative retrieval steps |
-| **🌳 Community Detection** | `tree_comm.struct_weight` | Weight to control impacts from topology |
-| **⚡ Performance** | `embeddings.batch_size` | Batch processing size |
-
-### 🎛️ Configuration Parameter Override Examples
-
-<details>
-<summary><strong>Click to expand detailed configuration options</strong></summary>
-
+### 1. 知识图谱构建评测 (`kg_eval`)
+衡量由不同 LLM 抽取的实体/三元组与 Gold 数据的一致性。
 ```bash
-# Retrieval related configuration
-python main.py --override '{
-  "retrieval": {
-    "top_k_filter": 30,
-    "chunk_similarity_threshold": 0.7,
-    "batch_size": 32
-  }
-}' --datasets demo
-
-# Construction related configuration
-python main.py --override '{
-  "construction": {
-    "max_workers": 32,
-    "chunk_size": 512,
-    "overlap_size": 50
-  }
-}' --datasets demo
-
-# Embedding related configuration
-python main.py --override '{
-  "embeddings": {
-    "model_name": "sentence-transformers/all-MiniLM-L6-v2",
-    "batch_size": 16,
-    "device": "cpu"
-  }
-}' --datasets demo
-
-# LLM related configuration
-python main.py --override '{
-  "llm": {
-    "model": "gpt-3.5-turbo",
-    "temperature": 0.7,
-    "max_tokens": 1500
-  }
-}' --datasets demo
+# 1. 生成 Gold 数据草案
+python -m eval.kg_eval.run generate_gold
+# 2. 启动批量抽取与对比评测
+python -m eval.kg_eval.run run
 ```
 
-</details>
-
-### 📊 Performance Optimization Recommendations
-
-**CPU Optimization:**
+### 2. 问答质量评测 (`rag_eval`)
+基于 LLM-as-a-Judge，对生成的答案进行多维度打分。
 ```bash
-# Suitable for CPU environment
-python main.py --override '{
-  "construction": {"max_workers": 4},
-  "embeddings": {"batch_size": 8, "device": "cpu"}
-}' --datasets demo
+# 执行基于 AIGC-EDU-test 数据集的全自动化回答与打分
+python -m eval.rag_eval.run --dataset AIGC-EDU-test --qa-mode agent
 ```
+*评测结果将保存至 `eval/results/` 目录下。*
 
-**GPU Optimization:**
-```bash
-# Suitable for GPU environment
-python main.py --override '{
-  "construction": {"max_workers": 16},
-  "embeddings": {"batch_size": 64, "device": "cuda"}
-}' --datasets demo
-```
+---
 
-**Memory Optimization:**
-```bash
-# Suitable for low memory environment
-python kt_rag.py --override '{
-  "construction": {"max_workers": 2},
-  "embeddings": {"batch_size": 4},
-  "retrieval": {"top_k_filter": 10}
-}' --datasets demo
-```
+<a id="configuration-details"></a>
+## ⚙️ 高级配置解析 (`base_config.yaml`)
+
+| 参数组 | 核心参数 | 说明 |
+| :--- | :--- | :--- |
+| **construction** | `chunk_size` | 文档切片大小。学术文献建议 1000 左右以保持上下文连贯。 |
+| | `mode: agent` | `agent` 模式会利用 CoT 进行更细致的抽取，速度较慢但质量高。 |
+| | `max_workers` | 本地 CPU 并发数（控制解析/IO）。 |
+| **retrieval** | `top_k: 20` | 初步召回的 Chunk 和三元组数量。 |
+| | `similarity_threshold` | FAISS 检索的相似度阈值。 |
+| **embeddings** | `device: cpu` | 若显存充足，可设为 `cuda` 以加速向量化。 |
 
 ---
 
 <a id="troubleshooting"></a>
-## 🔧 Troubleshooting
+## 🔧 常见问题与优化
 
-### ❌ FAISS Segmentation Fault When Building Indices
+### 1. FAISS 报错 `Segmentation fault: 11`
+处理大规模节点（例如 5000+）时，由于 OpenMP 并发冲突可能会导致崩溃。
+**解决方案**：在运行脚本前执行 `export OMP_NUM_THREADS=1`。
 
-**Problem Description:**
+### 2. 构图失败或 LLM 响应不完整
+- 检查 `config/base_config.yaml` 中的 `llm_timeout_seconds`。复杂抽取任务建议设为 90s 以上。
+- 若网络不稳定，可调节 `retry_attempts` 控制自动重试。
 
-When processing large-scale datasets (e.g., 7000+ nodes), the process may crash with a segmentation fault during the FAISS index building phase.
-
-**Typical Error Logs:**
-```log
-[2025-10-20 17:28:55] INFO enhanced_kt_retriever:2199 - Indexed 6000/7107 nodes
-[2025-10-20 17:28:55] INFO enhanced_kt_retriever:2199 - Indexed 7000/7107 nodes
-[2025-10-20 17:28:55] INFO enhanced_kt_retriever:2206 - Time taken to build node text index: 0.00603795051574707 seconds
-[2025-10-20 17:28:55] INFO enhanced_kt_retriever:2228 - Saved node text index with 6494 words to retriever/faiss_cache_new/test/node_text_index.pkl (size: 356795 bytes)
-[2025-10-20 17:28:55] INFO enhanced_kt_retriever:2351 - Precomputing chunk embeddings for direct chunk retrieval...
-[2025-10-20 17:28:55] INFO enhanced_kt_retriever:2574 - Loaded chunk embedding cache with 1014 entries from retriever/faiss_cache_new/test/chunk_embedding_cache.pt (file size: 1857728 bytes)
-[2025-10-20 17:28:55] INFO enhanced_kt_retriever:2353 - Successfully loaded chunk embeddings from disk cache
-[2025-10-20 17:28:55] INFO faiss_filter:856 - Building FAISS indices and embeddings...
-./start.sh: line 27: 38579 Segmentation fault: 11  python backend.py
-👋 Youtu-GraphRAG server stopped.
-/opt/homebrew/Cellar/python@3.10/3.10.17/Frameworks/Python.framework/Versions/3.10/lib/python3.10/multiprocessing/resource_tracker.py:224: UserWarning: resource_tracker: There appear to be 1 leaked semaphore objects to clean up at shutdown
+### 3. 数据一致性检查
+如果怀疑构图过程异常，可运行：
+```bash
+# 检查指定数据集的 Source/Chunk/Graph 一致性
+python backend.py --dataset-audit <name>
 ```
-
-**Key Indicators:**
-- Process crashes immediately after logging `Building FAISS indices and embeddings...`
-- Error message shows `Segmentation fault: 11`
-- Typically occurs when processing thousands of nodes
-
-**Root Cause:**
-
-This is caused by a conflict between OpenMP multi-threading and the FAISS library, leading to memory access violations. For detailed technical analysis, see: [Related Technical Blog](https://blog.gitcode.com/b2031d6f6292a3c43ce76451badb9766.html)
 
 ---
 
-**Solutions:**
-
-> ⚠️ **Important:** Only apply these fixes if you encounter the `Segmentation fault: 11` error described above. No configuration is needed for normal operation.
-
-**Method 1: Temporary Setting (Quick Test)**
-```bash
-# For web server (using start.sh)
-OMP_NUM_THREADS=1 ./start.sh
-
-# For command line usage
-OMP_NUM_THREADS=1 python main.py --datasets your_dataset
-
-# Or export first
-export OMP_NUM_THREADS=1
-./start.sh  # or python main.py --datasets your_dataset
-```
-
-**Method 2: Persistent Setting (For Frequent Large Dataset Processing)**
-```bash
-# Add to ~/.bashrc or ~/.zshrc
-echo 'export OMP_NUM_THREADS=1' >> ~/.bashrc  # or ~/.zshrc
-source ~/.bashrc  # or source ~/.zshrc
-
-# Then use normally
-./start.sh
-# or
-python main.py --datasets your_dataset
-```
-
-**Method 3: Modify Startup Script (Recommended for Web Service)**
-
-Edit the `start.sh` file and add the environment variable before line 27 (`python backend.py`):
-
-```bash
-# Modify lines 22-28 of start.sh to:
-echo "🚀 Starting backend server..."
-echo "🛑 Press Ctrl+C to stop the server"
-echo "=========================================="
-
-# Fix FAISS segmentation fault for large datasets
-export OMP_NUM_THREADS=1
-
-python backend.py
-```
-
-Then start normally:
-```bash
-./start.sh
-```
-
-**Verification:**
-
-After applying the fix, rebuild your knowledge graph. The FAISS index construction should complete successfully without crashes.
-
-**Related Issue:** [#123](https://github.com/TencentCloudADP/youtu-graphrag/issues/123)
-
----
-
-## 🎯 Quick Usage Selection
-
-| Use Case | Recommended Method | Features |
-|----------|-------------------|----------|
-| 🌐 **Interactive Experience** | <a href="#web-interface-quick-experience">Web Interface</a> | Visual operation, real-time feedback |
-| 💻 **Batch Processing** | <a href="#command-line-usage">Command Line</a> | Scriptable, efficient processing |
-| 🔧 **Custom Development** | <a href="#advanced-configuration">Advanced Configuration</a> | Flexible configuration, performance tuning |
-
----
-
-
-<div>
+<div align="center">
   
-  **🌟 We sincerely welcome STAR/PR/ISSUE 🌟**
+  **🌟 诚挚欢迎贡献代码或提出反馈 🌟**
   
-  <!-- [⬅️ Back to Home](README.md) • [📖 Project Documentation](README-CN.md) • [🌐 Web Usage](WEB_USAGE.md) -->
-  [⬅️ Back to Home](README.md) | [🌐 返回中文主页](README-CN.md)
+  [⬅️ 返回主页](README.md)
   
 </div>
