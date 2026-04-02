@@ -1,3 +1,28 @@
+<div align="center">
+  <h1>🧬 Academic-GraphRAG</h1>
+  <p><b>面向跨学科知识发现的图增强推理新范式</b></p>
+</div>
+
+<div align="center">
+  <img src="https://img.shields.io/badge/License-Academic_Use-orange.svg" alt="License">
+  <img src="https://img.shields.io/badge/Paper-Latest-blue.svg" alt="Paper">
+  <img src="https://img.shields.io/github/stars/Morris1029/Academic_graphRAG?style=social" alt="Stars">
+</div>
+
+<p align="center">
+  🚀 重新定义学术检索增强推理范式，支持多跳复杂推理、知识抽取与跨学科关联发现与评估。
+</p>
+
+<p align="center">
+  <a href="README-EN.md">English</a> •
+  <a href="#研究定位">研究定位</a> •
+  <a href="#评测流程">评测流程</a> •
+  <a href="#快速开始">快速开始</a> •
+  <a href="FULLGUIDE.md">完整指南</a>
+</p>
+
+---
+
 # 基于图检索增强生成的跨学科知识发现研究
 
 ## 项目简介

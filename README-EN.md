@@ -1,3 +1,28 @@
+<div align="center">
+  <h1>🧬 Academic-GraphRAG</h1>
+  <p><b>A New Paradigm for Graph-Enhanced Interdisciplinary Reasoning</b></p>
+</div>
+
+<div align="center">
+  <img src="https://img.shields.io/badge/License-Academic_Use-orange.svg" alt="License">
+  <img src="https://img.shields.io/badge/Paper-Latest-blue.svg" alt="Paper">
+  <img src="https://img.shields.io/github/stars/Morris1029/Academic_graphRAG?style=social" alt="Stars">
+</div>
+
+<p align="center">
+  🚀 Redefining academic retrieval-augmented reasoning, supporting multi-hop complex reasoning, knowledge extraction, and interdisciplinary discovery/evaluation.
+</p>
+
+<p align="center">
+  <a href="README.md">中文版</a> •
+  <a href="#research-positioning">Research Positioning</a> •
+  <a href="#evaluation-flow">Evaluation Flow</a> •
+  <a href="#quick-start">Quick Start</a> •
+  <a href="FULLGUIDE-EN.md">Full Guide</a>
+</p>
+
+---
+
 # Interdisciplinary Knowledge Discovery Research Based on Graph Retrieval-Augmented Generation (GraphRAG)
 
 ## Project Introduction
