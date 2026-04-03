@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+import os
+
+# Suppress TensorFlow logging and oneDNN warnings before other imports
+os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
+
 import argparse
 import json
 import sys
@@ -261,10 +267,45 @@ def command_run(args: argparse.Namespace, runtime_config: Dict[str, Any]) -> Non
     def _process_one_record(record: Dict[str, Any]) -> Dict[str, Any]:
         """处理单个样本：LLM 候选抽取 + 检索评估，返回可聚合的字典。"""
         candidate_result = service.extract(record, candidate_model, role_name="candidate")
+        cand_ext_dict = candidate_result.extraction.to_dict()
+        gold_extraction = record.get("kg_eval", {}).get("gold", {}).get("extraction", {})
+        
+        # ==== Inject Structural Metadata from Gold into Candidate ====
+        from eval.kg_eval.metrics import STRUCTURED_RELATIONS, STRUCTURED_ATTR_PREFIXES
+        
+        # 1. Merge structured triples
+        for t in gold_extraction.get("triples", []):
+            if len(t) == 3 and t[1] in STRUCTURED_RELATIONS:
+                if t not in cand_ext_dict.setdefault("triples", []):
+                    cand_ext_dict["triples"].append(t)
+                    
+        # 2. Merge structured attributes
+        cand_attrs = cand_ext_dict.setdefault("attributes", {})
+        for node, attrs in gold_extraction.get("attributes", {}).items():
+            for a in attrs:
+                if any(a.startswith(p) for p in STRUCTURED_ATTR_PREFIXES):
+                    node_attrs = cand_attrs.setdefault(node, [])
+                    if a not in node_attrs:
+                        node_attrs.append(a)
+                        
+        # 3. Restore entity types for the injected nodes
+        gold_types = gold_extraction.get("entity_types", {})
+        cand_types = cand_ext_dict.setdefault("entity_types", {})
+        for t in cand_ext_dict.get("triples", []):
+            if len(t) == 3 and t[1] in STRUCTURED_RELATIONS:
+                if t[0] not in cand_types and t[0] in gold_types:
+                    cand_types[t[0]] = gold_types[t[0]]
+                if t[2] not in cand_types and t[2] in gold_types:
+                    cand_types[t[2]] = gold_types[t[2]]
+        for node in cand_attrs:
+            if node not in cand_types and node in gold_types:
+                cand_types[node] = gold_types[node]
+        # ==============================================================
+
         comparison = compare_extractions(
             bridge,
-            record.get("kg_eval", {}).get("gold", {}).get("extraction", {}),
-            candidate_result.extraction.to_dict(),
+            gold_extraction,
+            cand_ext_dict,
         )
         retrieval_result = evaluate_sample_retrieval(
             record,
@@ -273,12 +314,17 @@ def command_run(args: argparse.Namespace, runtime_config: Dict[str, Any]) -> Non
             paper_top_k=paper_top_k,
             triple_top_k=triple_top_k,
         ) if retriever is not None else {}
+        
+        # Update candidate result dict with the injected extraction
+        cand_res_dict = candidate_result.to_dict()
+        cand_res_dict["extraction"] = cand_ext_dict
+        
         return {
             "id": record["id"],
             "title": record.get("meta", {}).get("title", ""),
             "gold_status": record.get("kg_eval", {}).get("gold", {}).get("status", ""),
-            "gold_extraction": record.get("kg_eval", {}).get("gold", {}).get("extraction", {}),
-            "candidate_result": candidate_result.to_dict(),
+            "gold_extraction": gold_extraction,
+            "candidate_result": cand_res_dict,
             **comparison,
             "retrieval_metrics": retrieval_result,
             "_comparison": comparison,

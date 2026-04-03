@@ -5,6 +5,10 @@ from typing import Any, Dict, Iterable, Set, Tuple
 from .construction import ConstructionBridge
 from .data_models import MetricCounts
 
+STRUCTURED_RELATIONS = {"撰写", "隶属", "发表于"}
+STRUCTURED_ATTR_PREFIXES = ("年份:", "关键词:", "来源:")
+
+
 
 def _attribute_accuracy(counts: MetricCounts) -> float:
     denom = counts.tp + counts.fp + counts.fn
@@ -32,9 +36,25 @@ def compare_extractions(
     normalized_gold = bridge.normalize_extraction(gold_extraction)
     normalized_candidate = bridge.normalize_extraction(candidate_extraction)
 
+    gold_struct_triples = {t for t in normalized_gold["triples"] if t[1] in STRUCTURED_RELATIONS}
+    cand_struct_triples = {t for t in normalized_candidate["triples"] if t[1] in STRUCTURED_RELATIONS}
+    gold_unstruct_triples = normalized_gold["triples"] - gold_struct_triples
+    cand_unstruct_triples = normalized_candidate["triples"] - cand_struct_triples
+
+    gold_struct_attrs = {a for a in normalized_gold["attributes"] if any(a[1].startswith(p) for p in STRUCTURED_ATTR_PREFIXES)}
+    cand_struct_attrs = {a for a in normalized_candidate["attributes"] if any(a[1].startswith(p) for p in STRUCTURED_ATTR_PREFIXES)}
+    gold_unstruct_attrs = normalized_gold["attributes"] - gold_struct_attrs
+    cand_unstruct_attrs = normalized_candidate["attributes"] - cand_struct_attrs
+
     entity_result = _compare_sets(normalized_gold["entities"], normalized_candidate["entities"])
-    relation_result = _compare_sets(normalized_gold["triples"], normalized_candidate["triples"])
-    attribute_result = _compare_sets(normalized_gold["attributes"], normalized_candidate["attributes"])
+    
+    relation_overall = _compare_sets(normalized_gold["triples"], normalized_candidate["triples"])
+    relation_struct = _compare_sets(gold_struct_triples, cand_struct_triples)
+    relation_unstruct = _compare_sets(gold_unstruct_triples, cand_unstruct_triples)
+
+    attribute_overall = _compare_sets(normalized_gold["attributes"], normalized_candidate["attributes"])
+    attribute_struct = _compare_sets(gold_struct_attrs, cand_struct_attrs)
+    attribute_unstruct = _compare_sets(gold_unstruct_attrs, cand_unstruct_attrs)
 
     return {
         "normalized_gold": {
@@ -54,48 +74,98 @@ def compare_extractions(
             "fn_items": entity_result["fn_items"],
         },
         "relation_metrics": {
-            **relation_result["counts"].to_dict(),
-            "tp_items": relation_result["tp_items"],
-            "fp_items": relation_result["fp_items"],
-            "fn_items": relation_result["fn_items"],
+            "overall": relation_overall["counts"].to_dict(),
+            "structured": relation_struct["counts"].to_dict(),
+            "unstructured": relation_unstruct["counts"].to_dict(),
+            "tp_items": relation_overall["tp_items"],
+            "fp_items": relation_overall["fp_items"],
+            "fn_items": relation_overall["fn_items"],
         },
         "attribute_metrics": {
-            "tp": attribute_result["counts"].tp,
-            "fp": attribute_result["counts"].fp,
-            "fn": attribute_result["counts"].fn,
-            "accuracy": _attribute_accuracy(attribute_result["counts"]),
-            "tp_items": attribute_result["tp_items"],
-            "fp_items": attribute_result["fp_items"],
-            "fn_items": attribute_result["fn_items"],
+            "overall": {
+                "tp": attribute_overall["counts"].tp,
+                "fp": attribute_overall["counts"].fp,
+                "fn": attribute_overall["counts"].fn,
+                "accuracy": _attribute_accuracy(attribute_overall["counts"])
+            },
+            "structured": {
+                "tp": attribute_struct["counts"].tp,
+                "fp": attribute_struct["counts"].fp,
+                "fn": attribute_struct["counts"].fn,
+                "accuracy": _attribute_accuracy(attribute_struct["counts"])
+            },
+            "unstructured": {
+                "tp": attribute_unstruct["counts"].tp,
+                "fp": attribute_unstruct["counts"].fp,
+                "fn": attribute_unstruct["counts"].fn,
+                "accuracy": _attribute_accuracy(attribute_unstruct["counts"])
+            },
+            "tp_items": attribute_overall["tp_items"],
+            "fp_items": attribute_overall["fp_items"],
+            "fn_items": attribute_overall["fn_items"],
         },
     }
 
 
 def aggregate_metric_blocks(per_sample_blocks: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
     entity_counts = MetricCounts()
-    relation_counts = MetricCounts()
-    attribute_counts = MetricCounts()
+    
+    relation_counts_overall = MetricCounts()
+    relation_counts_struct = MetricCounts()
+    relation_counts_unstruct = MetricCounts()
+
+    attribute_counts_overall = MetricCounts()
+    attribute_counts_struct = MetricCounts()
+    attribute_counts_unstruct = MetricCounts()
 
     for block in per_sample_blocks:
         entity_counts.tp += int(block["entity_metrics"]["tp"])
         entity_counts.fp += int(block["entity_metrics"]["fp"])
         entity_counts.fn += int(block["entity_metrics"]["fn"])
 
-        relation_counts.tp += int(block["relation_metrics"]["tp"])
-        relation_counts.fp += int(block["relation_metrics"]["fp"])
-        relation_counts.fn += int(block["relation_metrics"]["fn"])
+        rm = block["relation_metrics"]
+        relation_counts_overall.tp += int(rm["overall"]["tp"])
+        relation_counts_overall.fp += int(rm["overall"]["fp"])
+        relation_counts_overall.fn += int(rm["overall"]["fn"])
+        relation_counts_struct.tp += int(rm["structured"]["tp"])
+        relation_counts_struct.fp += int(rm["structured"]["fp"])
+        relation_counts_struct.fn += int(rm["structured"]["fn"])
+        relation_counts_unstruct.tp += int(rm["unstructured"]["tp"])
+        relation_counts_unstruct.fp += int(rm["unstructured"]["fp"])
+        relation_counts_unstruct.fn += int(rm["unstructured"]["fn"])
 
-        attribute_counts.tp += int(block["attribute_metrics"]["tp"])
-        attribute_counts.fp += int(block["attribute_metrics"]["fp"])
-        attribute_counts.fn += int(block["attribute_metrics"]["fn"])
+        am = block["attribute_metrics"]
+        attribute_counts_overall.tp += int(am["overall"]["tp"])
+        attribute_counts_overall.fp += int(am["overall"]["fp"])
+        attribute_counts_overall.fn += int(am["overall"]["fn"])
+        attribute_counts_struct.tp += int(am["structured"]["tp"])
+        attribute_counts_struct.fp += int(am["structured"]["fp"])
+        attribute_counts_struct.fn += int(am["structured"]["fn"])
+        attribute_counts_unstruct.tp += int(am["unstructured"]["tp"])
+        attribute_counts_unstruct.fp += int(am["unstructured"]["fp"])
+        attribute_counts_unstruct.fn += int(am["unstructured"]["fn"])
 
     return {
         "entity_prf": entity_counts.to_dict(),
-        "relation_prf": relation_counts.to_dict(),
+        "relation_prf": relation_counts_overall.to_dict(),
+        "relation_prf_structured": relation_counts_struct.to_dict(),
+        "relation_prf_unstructured": relation_counts_unstruct.to_dict(),
         "attribute_accuracy": {
-            "tp": attribute_counts.tp,
-            "fp": attribute_counts.fp,
-            "fn": attribute_counts.fn,
-            "accuracy": _attribute_accuracy(attribute_counts),
+            "tp": attribute_counts_overall.tp,
+            "fp": attribute_counts_overall.fp,
+            "fn": attribute_counts_overall.fn,
+            "accuracy": _attribute_accuracy(attribute_counts_overall),
+        },
+        "attribute_accuracy_structured": {
+            "tp": attribute_counts_struct.tp,
+            "fp": attribute_counts_struct.fp,
+            "fn": attribute_counts_struct.fn,
+            "accuracy": _attribute_accuracy(attribute_counts_struct),
+        },
+        "attribute_accuracy_unstructured": {
+            "tp": attribute_counts_unstruct.tp,
+            "fp": attribute_counts_unstruct.fp,
+            "fn": attribute_counts_unstruct.fn,
+            "accuracy": _attribute_accuracy(attribute_counts_unstruct),
         },
     }

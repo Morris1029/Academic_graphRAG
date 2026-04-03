@@ -1,5 +1,152 @@
 [
-{"title": "Lionel Messi", "text": "After a year at Barcelona's youth academy, La Masia, Messi was finally enrolled in the Royal Spanish Football Federation (RFEF) in February 2002. Now playing in all competitions, he befriended his teammates, among whom were Cesc F\u00e0bregas and Gerard Piqu\u00e9. After completing his growth hormone treatment aged 14, Messi became an integral part of the ``Baby Dream Team '', Barcelona's greatest - ever youth side. During his first full season (2002 -- 03), he was top scorer with 36 goals in 30 games for the Cadetes A, who won an unprecedented treble of the league and both the Spanish and Catalan cups. The Copa Catalunya final, a 4 -- 1 victory over Espanyol, became known in club lore as the partido de la m\u00e1scara, the final of the mask. A week after suffering a broken cheekbone during a league match, Messi was allowed to start the game on the condition that he wear a plastic protector; soon hindered by the mask, he took it off and scored two goals in 10 minutes before his substitution. At the close of the season, he received an offer to join Arsenal, his first from a foreign club, but while Fbregas and Piqu soon left for England, he chose to remain in Barcelona."}, 
-{"title": "FC Barcelona", "text": "Despite being the favourites and starting strongly, Barcelona finished the 2006-07 season without trophies. A pre-season US tour was later blamed for a string of injuries to key players, including leading scorer Eto'o and rising star Lionel Messi. There was open feuding as Eto'o publicly criticized coach Frank Rijkaard and Ronaldinho. Ronaldinho also admitted that a lack of fitness affected his form. In La Liga, Barcelona were in first place for much of the season, but inconsistency in the New Year saw Real Madrid overtake them to become champions. Barcelona advanced to the semi-finals of the Copa del Rey, winning the first leg against Getafe 5\u20132, with a goal from Messi bringing comparison to Diego Maradona's goal of the century, but then lost the second leg 4\u20130. They took part in the 2006 FIFA Club World Cup, but were beaten by a late goal in the final against Brazilian side Internacional. In the Champions League, Barcelona were knocked out of the competition in the last 16 by eventual runners-up Liverpool on away goals."}, 
-{"title": "FC Barcelona", "text": "In June 1982, Diego Maradona was signed for a world record fee of 5 million from Boca Juniors. In the following season, under coach Luis, Barcelona won the Copa del Rey, beating Real Madrid. However, Maradona's time with Barcelona was short-lived and he soon left for Napoli. At the start of the 1984\u201385 season, Terry Venables was hired as manager and he won La Liga with noteworthy displays by German midfielder Bernd Schuster. The next season, he took the team to their second European Cup final, only to lose on penalties to Steaua Bucure\u015fti during a dramatic evening in Seville."} 
+    {
+        "id": "paper_b329c5a3cde96682d65edd06c36be976",
+        "meta": {
+            "title": "AIGC赋能生物工程教育的范式重构——一个“认知-实践-伦理”整合框架",
+            "authors": "许晟;刘兆星;曹飞;贾红华;王浩绮;陈可泉",
+            "organ": "南京工业大学生物与制药工程学院",
+            "source": "实验室研究与探索",
+            "keywords": "生成式人工智能;生物工程教育;教学范式重构;整合框架;数字伦理",
+            "abstract": "为应对生成式人工智能(AIGC)为生物工程教育带来的机遇与挑战,提出一种“认知-实践-伦理”三维动态整合框架(CPE-3DF)。该框架以AIGC为核心驱动,通过领域知识增强、多模态生成与伦理内嵌等技术改造教学体系,构建“知识学习-技能训练-价值塑造”的协同机制,实现三者深度融合。在《基因工程》与《生物工程专业综合实验》课程中,依托DNAPlay虚拟实验平台与Virtual Fermenter数字孪生系统,打造出“分子设计融入认知探究、工艺优化结合实践训练、实验全程内嵌伦理思辨”的教学场景,实现了三维教学目标的有机统一。实践表明,CPE-3DF显著提升了学生的认知深度、实践能力与伦理自觉,为培养兼具认知素养、技术创新能力与社会责任感的生物工程人才提供了有效路径。",
+            "year": "2026",
+            "time": "2026-03-06 19:01",
+            "doi": "",
+            "database": "期刊"
+        }
+    },
+    {
+        "id": "paper_e27fd15c2e430cb8b6a1a83b12bf819a",
+        "meta": {
+            "title": "AIGC赋能智能物联网六阶段递进式实践教学体系探索",
+            "authors": "李亚南;尹辉娟;李聪聪;马丽;刘博",
+            "organ": "河北农业大学信息科学与技术学院;河北农业大学河北省农业大数据重点实验室",
+            "source": "实验室研究与探索",
+            "keywords": "物联网工程;生成式人工智能;多学科融合;递进式实践教学;工程教育",
+            "abstract": "为探索新工科背景下物联网工程专业实践教学模式创新路径,本文采用多学科融合方法构建了智慧物联网技术架构与物联网实践项目群,通过设计六阶段递进式实施路径,将多层次生成式人工智能工具深度融入教学全过程,并建立了智能化评价体系,从而构建了基于生成式人工智能的新实践教学体系。通过准实验设计开展教学验证,结果显示实验组在4个测量维度上均显著优于对照组,表明该教学模式有效提升了学生的综合实践能力和创新素养,为工程教育数字化转型提供了理论指导与实践范式,也为培养适应智能时代的复合型物联网工程人才提供了系统解决方案。",
+            "year": "2026",
+            "time": "2026-03-06 17:19",
+            "doi": "",
+            "database": "期刊"
+        }
+    },
+    {
+        "id": "paper_61b52eb712ba2dfe5b9293c12494d153",
+        "meta": {
+            "title": "GenAI对教育媒介本体与研究范式的重构",
+            "authors": "戎璐;赵满坤;喻梅",
+            "organ": "天津大学",
+            "source": "黑龙江高教研究",
+            "keywords": "生成式人工智能;教学媒介;多媒体学习认知理论;教育技术范式",
+            "abstract": "生成式人工智能(GenAI)的兴起，正重塑教育技术的媒介本体、教学实践、研究范式。在媒介本体层面，GenAI突破传统媒介的符号表征逻辑，通过概率生成、上下文建模、强化学习等三个技术机制，实现从信息承载到意义生成的本体转变;在教学实践层面，构建“认知-互动-生态”三维分析框架，揭示其如何推动教学媒介从信息容器转向意义生成、从传输管道转向对话伙伴、从封闭系统转向开放网络;在研究范式层面，GenAI推动教育技术研究从静态理解技术转向关注其在教学中的动态生成过程，从将学习与教学视为客观存在的结果转向强调意义在师生与GenAI互动中不断建构，在方法论上从单纯关注效果测量转向探究其背后的生成机制。",
+            "year": "2026",
+            "time": "2026-03-05",
+            "doi": "10.19903/j.cnki.CN23-1074/G.2026.03.003",
+            "database": "期刊"
+        }
+    },
+    {
+        "id": "paper_8e0596ed6a32f3db20f21058b2b1fd62",
+        "meta": {
+            "title": "生成式人工智能赋能高校创新创业教育的价值意蕴、现实梗阻与实践路径",
+            "authors": "王璐;罗江华;张玉柳",
+            "organ": "新疆师范大学;黄淮学院;西南大学",
+            "source": "黑龙江高教研究",
+            "keywords": "生成式人工智能;高校创新创业教育;价值意蕴;实践路径",
+            "abstract": "推动高校创新创业教育高质量发展是筑牢中国式现代化根基、提升国家创新体系整体效能的重要路径。GenAI凭借其多模态内容生成、跨领域知识整合、情境化推理决策等特性，对高校创新创业教育变革展现强劲潜力。以GenAI为切入点，探讨了GenAI如何革新传统教育体系，赋能高校创新创业教育;分析了GenAI在赋能过程中可能面临的“算法确定性与创新不确定性错位、智能工具理性与教育价值理性冲突、数据质量与隐私保护失衡、内部管理脱嵌与外部系统失灵叠加”等现实梗阻;进而尝试构建一条“技术筑基-教学创新-治理保障-多元协同”的四维协同发展路径，为高校创新创业教育在数智时代转型提供理论支持和实践指导，助力教育强国建设。",
+            "year": "2026",
+            "time": "2026-03-05",
+            "doi": "10.19903/j.cnki.CN23-1074/G.2026.03.022",
+            "database": "期刊"
+        }
+    },
+    {
+        "id": "paper_25233a8ef571fe2154d8bb948ef0dd5e",
+        "meta": {
+            "title": "生成式人工智能教育应用的多维审思——评《生成式人工智能教育应用》",
+            "authors": "张杏辉",
+            "organ": "中国民航大学马克思主义学院",
+            "source": "管理现代化",
+            "keywords": "",
+            "abstract": "<正>生成式人工智能正以前所未有的深度与广度融入教育领域，不仅重塑着教学的工具与方法，更在根本上引发了对教育主体、教育过程与教育生态的系统性审思。生成式人工智能如何有效融入教育成为了当前中国教育必须回答好和解决好的一项重要而又紧迫的时代课题。由刘邦奇、聂小林等编著，人民教育出版社出版的《生成式人工智能教育应用》一书，即科学回答和解决了这一理论和现实问题。",
+            "year": "2026",
+            "time": "2026-03-04 09:16",
+            "doi": "10.19634/j.cnki.11-1403/c.2026.01.024",
+            "database": "期刊"
+        }
+    },
+    {
+        "id": "paper_6b7ffd485d4486cc4b0bd5e8ee2e6b6b",
+        "meta": {
+            "title": "信息资源管理专业学生生成式人工智能素养评价指标体系构建研究",
+            "authors": "张裕晨;金徐雯萱;邱均平",
+            "organ": "杭州电子科技大学中国科教评价研究院",
+            "source": "图书馆杂志",
+            "keywords": "生成式人工智能素养;信息资源管理;层次分析法;评价指标体系",
+            "abstract": "随着生成式人工智能的快速发展，信息资源管理学科亟需构建不同于传统人工智能素养评价体系。本研究在系统梳理人工智能素养内涵发展基础上，针对信息资源管理学科特点，提出信息资源管理专业学生生成式人工智能素养概念，从理论知识、交互力、应用力与伦理意识4个维度构建评价指标，并采用层次分析法确定各级指标权重。研究发现，4个一级指标之间存在显著协同关系：生成式人工智能应用力整体权重最高，体现信管专业学生跨场景实践能力的重要性。交互力是信管学生使用生成式人工智能的关键，是实现人机协作、知识共创的核心。理论知识与伦理意识则是理解和安全使用生成式人工智能技术的底层保障，为学生保持技术理性与价值自觉提供支撑。应强化相关课程实践导向，提升学生技术迁移与反思优化能力，并将伦理教育贯穿教学全过程，以保障学术诚信和信息安全，从而提升信管专业学生的生成式人工智能素养。",
+            "year": "2026",
+            "time": "2026-03-02 11:23",
+            "doi": "",
+            "database": "期刊"
+        }
+    },
+    {
+        "id": "paper_a85c895b23ecca54def0525f41d8f5f5",
+        "meta": {
+            "title": "生成式人工智能赋能科学探究学习:价值内涵、实践框架与实践方略",
+            "authors": "郭利明;汪灶文;郑勤华",
+            "organ": "温州大学教育学院;北京师范大学远程教育研究中心",
+            "source": "电化教育研究",
+            "keywords": "生成式人工智能;科学探究学习;科学教育;智能体;拔尖创新人才",
+            "abstract": "在新时代科学教育改革进程中,学生的科学探究实践能力已成为重点关注对象,呼吁中小学要通过开展科学探究学习加以培养。然而,现实中学生科学探究学习面临诸多挑战:能力目标体现不足、探究任务呈现伪探究、探究过程缺乏自主性与适应性支持,以及学评互馈的动态评价机制断裂。生成式人工智能的惊人发展为突破这些现实挑战提供了新的可能性。因此,研究立足于生成式人工智能的赋能作用视角,分析其在探究实践、素养培育与人才培养等方面带来的核心价值,并围绕问题解决与价值实现构建一套由核心驱动器、生成式人工智能驱动的5E式科学探究学习、“学习—能力—成才”多向的价值互通组成的实践框架。最后,研究提出以下实践方略:研发科学探究学习垂类智能体、重视“师—机—生”关系、提升学生AI素养、增强学生科学身份认同,以及警惕师生技术依赖异化风险。研究从理论思想上阐释了智能时代科学探究学习的基本发展方向,能为中小学科学探究学习的发展提供参考,助力科学教育高质量发展。",
+            "year": "2026",
+            "time": "2026-02-27 16:36",
+            "doi": "10.13811/j.cnki.eer.2026.03.010",
+            "database": "期刊"
+        }
+    },
+    {
+        "id": "paper_9c383c2decfe8f70b5b8576b26e8f7c9",
+        "meta": {
+            "title": "人智协同教学决策:动因、适应性表征与实践进路",
+            "authors": "张玉柳;罗江华",
+            "organ": "西南大学西南民族教育与心理研究中心",
+            "source": "电化教育研究",
+            "keywords": "生成式人工智能;人智协同;教学决策;适应性表征",
+            "abstract": "近年来,生成式人工智能凭借其在教学内容生成、动态交互支持及多模态数据理解等方面的技术特性,深刻推动了人智协同教学决策范式的转型,促使其在决策模型、决策过程及决策主体三个核心层面发生系统性转变。为促进人智协同教学决策中主体逻辑、嵌入理念、核心目标的动态耦合,研究试图从人机兼容性理论视角,建构人智协同教学决策的适应性表征模型。在实践层面,为保障人智协同教学决策的协同实现,须以教育伦理对齐的规范与引导为决策边界、以决策大模型的高质量建构为坚实基石、以学生的有效学习和深度学习为核心导向以及人智协同教学实践的合理化为必要张力,从而推动人智协同教学决策向更具教育性、智慧性与伦理性的方向发展。",
+            "year": "2026",
+            "time": "2026-02-27 16:35",
+            "doi": "10.13811/j.cnki.eer.2026.03.011",
+            "database": "期刊"
+        }
+    },
+    {
+        "id": "paper_ae2a143afa48f033b5eaecd099ec7891",
+        "meta": {
+            "title": "面向国际中文教育的教学多智能体:目标定位、系统架构与应用场景",
+            "authors": "袁亚兴;贺媛婧;管梦媛;智勇",
+            "organ": "数字化学习技术集成与应用教育部工程研究中心;国家开放大学数字化部;国开在线教育科技有限公司人工智能教育应用研究院",
+            "source": "电化教育研究",
+            "keywords": "国际中文教育;教学多智能体;大语言模型;人工智能;具身认知理论",
+            "abstract": "在“一带一路”倡议与职教出海背景下,国际中文教育面临学习者规模扩大、需求多元化及传统教学模式局限等挑战,亟须以智能技术赋能教学创新。随着人工智能技术的跨越式发展,基于大语言模型的教学多智能体有望重塑国际中文教育教学新范式。为此,文章基于具身认知理论,系统探讨教学多智能体在国际中文教育中的应用潜力与构建逻辑。研究首先阐述了教学多智能体的现实需求和目标定位,提出了认知适配、个性化、灵活协同、跨模态感知与交互及持续追踪的五大设计原则。进而,构建了以“具身交互—语境融合—认知建构—反馈优化”为核心功能闭环的教学多智能体协同机制,并阐述了其组织架构与运行机制。最后,结合汉语言要素教学、汉语言技能教学等典型场景,探讨了具体应用路径。经实践验证,教学多智能体能够有效支持复杂的情境化语言学习和跨模态交互,为国际中文教育的数智化转型提供了重要的理论与实践参考。",
+            "year": "2026",
+            "time": "2026-02-27 16:29",
+            "doi": "10.13811/j.cnki.eer.2026.03.015",
+            "database": "期刊"
+        }
+    },
+    {
+        "id": "paper_8f4d955612eb78660894bd240d043592",
+        "meta": {
+            "title": "对话式教学智能体促进中学生编程学习表现的实证研究",
+            "authors": "傅骞;赵亚宁;甘甜甜;郑娅峰",
+            "organ": "北京师范大学教育技术学院;武汉经开外国语学校;北京师范大学珠海校区教育科技中心",
+            "source": "电化教育研究",
+            "keywords": "大语言模型;编程学习;教学智能体;对话式教学策略;学习表现",
+            "abstract": "编程学习作为基础教育阶段信息科技课程的重要内容,其教学成效直接影响学生计算思维和问题解决能力的发展。随着大语言模型技术的发展,对话式教学智能体为实现个性化、实时响应的编程学习提供新的支持路径。但现有智能体多以被动应答为主,缺乏对学生认知过程的智能引导,难以有效支持深层次学习。基于此,研究旨在探究不同对话式教学在初中编程学习中的差异化作用,以构建更具教学适配性的智能体支持模式。研究基于对话式教学理论,开发了引导型和追问型两类对话式教学智能体,并通过引导型组、追问型组、整合型组(引导型+追问型)三个实验组比较了不同智能体应用策略的教学效果。结果显示,与单一策略的引导型组和追问型组相比,整合型组在提升学生编程成绩和问题解决能力方面更具显著优势,并能更有效激发学生的中高层认知探究与建构行为。基于此,研究进一步提出GAI赋能编程学习应从技术导向转向认知适配导向、从固定交互转向人机适切调节、从认知支持拓展至非认知支持三项赋能原则。",
+            "year": "2026",
+            "time": "2026-02-27 16:19",
+            "doi": "10.13811/j.cnki.eer.2026.03.005",
+            "database": "期刊"
+        }
+    }
 ]
