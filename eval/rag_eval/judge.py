@@ -43,8 +43,8 @@ class LLMJudge:
             "reference_answer": sample.reference_answer,
             "eval_focus": sample.eval_focus,
             "predicted_answer": prediction.answer,
-            "retrieved_triples": prediction.retrieved_triples[:8],
-            "retrieved_chunks": [chunk[:500] for chunk in prediction.retrieved_chunks[:3]],
+            "retrieved_triples": prediction.retrieved_triples[:25],
+            "retrieved_chunks": [chunk[:1200] for chunk in prediction.retrieved_chunks[:12]],
         }
 
         prompt = self.prompt_template

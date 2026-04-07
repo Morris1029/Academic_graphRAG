@@ -1028,7 +1028,8 @@ class KTBuilder:
             return
 
         new_schema_types = parsed_response.get("new_schema_types", {})
-        if new_schema_types:
+        # Only log if there's actually something to log (non-empty lists)
+        if new_schema_types and any(new_schema_types.get(k) for k in ["nodes", "relations", "attributes"]):
             logger.info(
                 "Ignoring LLM-proposed schema extensions for dataset '%s': %s",
                 self.dataset_name,

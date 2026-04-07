@@ -4,7 +4,7 @@ construction:
   bridge_min_confidence: 0.75
   bridge_enable_fallback: false
   bridge_max_edges_per_paper: 2
-  batch_size_docs: 48
+  batch_size_docs: 12
   token_budget_per_batch: 24000
   bridge_relations:
     # 扩展、对比、复用
@@ -15,10 +15,10 @@ construction:
   datasets_no_chunk:
     - demo
   max_workers: 18
-  max_concurrent_llm_requests: 30
+  max_concurrent_llm_requests: 18
   requests_per_minute: 720
   tokens_per_minute_budget: 0
-  llm_timeout_seconds: 90
+  llm_timeout_seconds: 240
   retry_attempts: 3
   retry_backoff_base_seconds: 2
   retry_backoff_max_seconds: 20
@@ -282,8 +282,8 @@ retrieval:
     search_k: 50
   recall_paths: 2
   similarity_threshold: 0.3
-  top_k: 20
-  top_k_filter: 20
+  top_k: 25
+  top_k_filter: 25
   weak_relation_penalty: 0.2
 
 triggers:

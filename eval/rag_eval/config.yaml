@@ -11,7 +11,7 @@ defaults:
   results_dir: "eval/results/rag_eval"
   prompt_path: "eval/rag_eval/prompts/judge_prompt.txt"
   max_samples:
-  concurrency: 10
+  concurrency: 18
   save_raw_context: true
   prediction_cache: true
 
@@ -63,7 +63,7 @@ roles:
 evaluation:
   dimensions:
     accuracy:
-      weight: 0.2
+      weight: 0.3
       description: "事实客观真实性：检验回答与参考答案及检索证据的一致性，严格检测幻觉与事实错误"
     completeness:
       weight: 0.2
@@ -72,8 +72,8 @@ evaluation:
       weight: 0.2
       description: "论证链路自洽：审查因果推导是否严密、前后呼应、结构清晰且具说服力"
     explainability:
-      weight: 0.2
+      weight: 0.15
       description: "证据溯源透明度：评估答案是否提供了详实的信息依据与明确的推理链路映射"
     interdisciplinarity:
-      weight: 0.2
+      weight: 0.15
       description: "跨域知识融合：检验解答能否有效整合不同学科视阈，实现知识要素的跨域关联与深度印证"
