@@ -1384,6 +1384,10 @@ def prepare_retrieved_graph_visualization(triples: List[str]) -> Dict:
                 if isinstance(parts, (list, tuple)) and len(parts) == 3:
                     source, relation, target = str(parts[0]), str(parts[1]), str(parts[2])
 
+            # [兜底逻辑] 如果 triple 本身就是 list 或 tuple 格式（检索器可能直接返回原始数据）
+            if source is None and isinstance(triple, (list, tuple)) and len(triple) == 3:
+                source, relation, target = str(triple[0]), str(triple[1]), str(triple[2])
+
             if source is None and isinstance(triple, str):
                 normalized = re.sub(r"\s*\[score:\s*[-+]?\d*\.?\d+\]\s*$", "", triple.strip())
                 if normalized.startswith("(") and normalized.endswith(")"):

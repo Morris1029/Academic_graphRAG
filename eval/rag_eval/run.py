@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import os
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
@@ -48,6 +49,35 @@ def zero_judgment(sample_id: str, dimensions: dict, verdict: str, error: str) ->
 
 
 # ---------------------------------------------------------------------------
+# Progress Tracking
+# ---------------------------------------------------------------------------
+
+class ProgressTracker:
+    def __init__(self, total: int, phase_name: str):
+        self.total = total
+        self.phase_name = phase_name
+        self.completed = 0
+        self.start_time = time.time()
+        self.lock = threading.Lock()
+
+    def format_seconds(self, seconds: float) -> str:
+        h = int(seconds // 3600)
+        m = int((seconds % 3600) // 60)
+        s = int(seconds % 60)
+        if h > 0:
+            return f"{h:02d}:{m:02d}:{s:02d}"
+        return f"{m:02d}:{s:02d}"
+
+    def update(self) -> str:
+        with self.lock:
+            self.completed += 1
+            elapsed = time.time() - self.start_time
+            avg_time = elapsed / self.completed
+            remaining = avg_time * (self.total - self.completed)
+            return f"({self.format_seconds(elapsed)} | ETA {self.format_seconds(remaining)})"
+
+
+# ---------------------------------------------------------------------------
 # Phase-1: 并发 Retrieval & Answer
 # ---------------------------------------------------------------------------
 
@@ -55,20 +85,24 @@ def _answer_one(
     runner: OfflineGraphRAGRunner,
     cache: PredictionCache,
     sample: EvaluationSample,
-    index: int,
+    tracker: ProgressTracker,
     total: int,
 ) -> Tuple[EvaluationSample, QAPrediction]:
     """在线程池中执行单问题的检索+回答，命中缓存则直接返回。"""
     cached = cache.get(sample.question_id)
     if cached is not None:
+        stats = tracker.update()
         logger.info(
-            f"[{index}/{total}] ⚡ 缓存命中，跳过检索 question_id={sample.question_id}"
+            f"[{tracker.completed}/{total}] {stats} ⚡ 缓存命中 question_id={sample.question_id}"
         )
         return sample, cached
 
-    logger.info(f"[{index}/{total}] 🔍 检索回答 question_id={sample.question_id}")
+    # logger.info(f"[{index}/{total}] 🔍 正在检索 question_id={sample.question_id}")
     prediction = runner.answer_question(sample.question_id, sample.question)
     cache.save(prediction)
+    
+    stats = tracker.update()
+    logger.info(f"[{tracker.completed}/{total}] {stats} ✅ 检索回答完成 question_id={sample.question_id}")
     return sample, prediction
 
 
@@ -92,9 +126,10 @@ def run_retrieval_phase(
         f"🚀 Phase-1 开始：并发检索回答，共 {total} 题，并发数={concurrency}"
     )
 
+    tracker = ProgressTracker(total, "Phase-1")
     with ThreadPoolExecutor(max_workers=concurrency, thread_name_prefix="rag-retrieval") as executor:
         for index, sample in enumerate(samples, start=1):
-            future = executor.submit(_answer_one, runner, cache, sample, index, total)
+            future = executor.submit(_answer_one, runner, cache, sample, tracker, total)
             futures_map[future] = index - 1  # 记录原始下标
 
     # 按原始顺序重组结果
@@ -129,15 +164,17 @@ def _judge_one(
     dimensions: dict,
     sample: EvaluationSample,
     prediction: QAPrediction,
-    index: int,
+    tracker: ProgressTracker,
     total: int,
 ) -> Tuple[EvaluationSample, QAPrediction, JudgmentResult]:
     """在线程池中执行单问题的 Judge 评分。"""
-    logger.info(f"[{index}/{total}] ⚖️  Judge 评分 question_id={sample.question_id}")
     if prediction.error:
         judgment = zero_judgment(sample.question_id, dimensions, "qa_error", prediction.error)
     else:
         judgment = judge.judge(sample, prediction)
+    
+    stats = tracker.update()
+    logger.info(f"[{tracker.completed}/{total}] {stats} ⚖️  Judge 评分完成 question_id={sample.question_id}")
     return sample, prediction, judgment
 
 
@@ -161,10 +198,11 @@ def run_judge_phase(
         f"🚀 Phase-2 开始：并发 Judge 评分，共 {total} 题，并发数={concurrency}"
     )
 
+    tracker = ProgressTracker(total, "Phase-2")
     with ThreadPoolExecutor(max_workers=concurrency, thread_name_prefix="rag-judge") as executor:
         for index, (sample, prediction) in enumerate(retrieval_results, start=1):
             future = executor.submit(
-                _judge_one, judge, dimensions, sample, prediction, index, total
+                _judge_one, judge, dimensions, sample, prediction, tracker, total
             )
             futures_map[future] = index - 1
 

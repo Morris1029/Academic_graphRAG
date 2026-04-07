@@ -11,7 +11,7 @@ defaults:
   results_dir: "eval/results/rag_eval"
   prompt_path: "eval/rag_eval/prompts/judge_prompt.txt"
   max_samples:
-  concurrency: 18
+  concurrency: 12
   save_raw_context: true
   prediction_cache: true
 

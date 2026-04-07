@@ -1439,37 +1439,43 @@ class KTRetriever:
             entity_first_nodes = [node for node in filtered_candidate_nodes if self._is_primary_entity_node(node)]
             fallback_nodes = [node for node in filtered_candidate_nodes if node not in entity_first_nodes]
             top_nodes = (entity_first_nodes + fallback_nodes)[:self.top_k]
+            # [关键改进] 增加邻域扩展的广度，即使排名靠后的论文也能触达其所属社区中心。
+            expansion_top_nodes = (entity_first_nodes + fallback_nodes)[:max(15, self.top_k)]
 
             all_relations = future_faiss_relations.result()
 
             expansion_start = time.time()
             future_path_triples = executor.submit(
                 self._path_based_search,
-                top_nodes,
+                expansion_top_nodes,
                 future_keywords.result() if future_keywords else [],
                 max_depth=2
             ) if question else None
 
             future_neighbor_triples = executor.submit(
                 self._optimized_neighbor_expansion,
-                top_nodes,
+                expansion_top_nodes,
                 question_embed
             )
 
             one_hop_triples = future_neighbor_triples.result()
             path_triples = future_path_triples.result() if future_path_triples else []
             relation_triples = self._get_relation_matched_triples(
-                top_nodes,
+                expansion_top_nodes,
                 all_relations
             )
 
             all_triples = list(dict.fromkeys(one_hop_triples + path_triples + relation_triples))
             chunk_results = future_chunk_retrieval.result()
 
+        # [重要修复] 使用 _extract_triple_based_info 将原始 (ID, rel, ID) 元组转换为带元数据的字符串格式，
+        # 否则后端 backend.py 的可视化逻辑会过滤掉这些元组形式的数据。
+        formatted_triples = self._extract_triple_based_info(all_triples)
+
         return {
             "top_nodes": top_nodes,
             "top_relations": all_relations,
-            "one_hop_triples": all_triples,
+            "one_hop_triples": formatted_triples,
             "chunk_results": chunk_results  
         }
 
@@ -1511,15 +1517,25 @@ class KTRetriever:
         A neighbor is kept only if its cached embedding has cosine similarity
         >= neighbor_sim_threshold with question_embed.  This prevents hub nodes
         from flooding results with unrelated triples.  Nodes without a cached
-        embedding are accepted by default to avoid missing valid hits.
+        embedding or community super-nodes are accepted for connectivity.
         """
         edge_queries: set = set()
         for node in top_nodes:
             neighbors = self._get_cached_neighbors(node)
             for nb in neighbors:
+                # [关键优化] 对于社区节点，由于其作为主题聚合中心的重要性，
+                # 以及摘要 Embedding 往往较宽泛，不论得分高低均建议保留。
+                is_community = False
+                if nb in self.graph.nodes:
+                    node_data = self.graph.nodes[nb]
+                    label = str(node_data.get("label", "")).lower()
+                    schema_type = str(node_data.get("properties", {}).get("schema_type", "")).strip()
+                    if label == "community" or schema_type in {"主题社区", "community"}:
+                        is_community = True
+
                 nb_embed = self.node_embedding_cache.get(nb)
-                if nb_embed is None:
-                    # No embedding cached - accept by default
+                if is_community or nb_embed is None:
+                    # No embedding cached or community node - accept for connectivity
                     edge_queries.add((node, nb))
                     edge_queries.add((nb, node))
                 else:
@@ -1544,9 +1560,11 @@ class KTRetriever:
         for u, v in edge_queries:
             edge_data = self.graph.get_edge_data(u, v)
             if edge_data:
-                relation = list(edge_data.values())[0].get('relation', '')
-                if relation:
-                    triples.append((u, relation, v))
+                # 获取该边所有的关系类型（MultiDiGraph 可能存在多条边）
+                for key, data in edge_data.items():
+                    relation = data.get('relation', '')
+                    if relation:
+                        triples.append((u, relation, v))
         return triples
 
     def _get_relation_matched_triples(self, top_nodes: List[str], relations: List[str]) -> List[Tuple]:
