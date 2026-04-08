@@ -423,7 +423,8 @@ Your reasoning:
             break
 
         if "The new query is:" in reasoning:
-            new_query = reasoning.split("The new query is:")[1].strip().splitlines()[0]
+            lines = reasoning.split("The new query is:")[1].strip().splitlines()
+            new_query = lines[0] if lines else ""
         else:
             new_query = reasoning
         

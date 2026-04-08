@@ -1747,7 +1747,7 @@ class KTRetriever:
         """
         triple_texts = []
         
-        for h, r, t in triples:
+        for h, r, t, *extra in triples:
             try:
                 head_text = self._get_node_display_name(h)
                 tail_text = self._get_node_display_name(t)
@@ -2797,7 +2797,7 @@ class KTRetriever:
         triple_texts = []
         valid_triples = []
         
-        for h, r, t in triples:
+        for h, r, t, *extra in triples:
             try:
                 head_text = self._get_node_text(h)
                 tail_text = self._get_node_text(t)
@@ -2859,7 +2859,7 @@ class KTRetriever:
         """
         scored_triples = []
         
-        for h, r, t in triples:
+        for h, r, t, *extra in triples:
             try:
                 head_text = self._get_node_text(h)
                 tail_text = self._get_node_text(t)

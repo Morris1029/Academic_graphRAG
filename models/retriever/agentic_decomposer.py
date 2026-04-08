@@ -93,5 +93,14 @@ class GraphQ:
                     "attributes": []
                 }
             }
+        elif not isinstance(content, dict):
+            content = {
+                "sub_questions": [],
+                "involved_types": {
+                    "nodes": [],
+                    "relations": [],
+                    "attributes": []
+                }
+            }
         
-        return content  
+        return content

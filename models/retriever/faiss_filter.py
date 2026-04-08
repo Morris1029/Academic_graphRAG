@@ -235,7 +235,11 @@ class DualFAISSRetriever:
     def _process_triple_index(self, idx: int) -> List[Tuple[str, str, str]]:
         """Process a single triple index and return all related triples."""
         try:
-            h, r, t = self.triple_map[str(idx)]
+            indexed_triple = self.triple_map[str(idx)]
+            if len(indexed_triple) >= 3:
+                h, r, t = indexed_triple[:3]
+            else:
+                return []
             triples = [(h, r, t)]  # Original triple
             
             # Add neighbor triples for both head and tail
@@ -1010,7 +1014,7 @@ class DualFAISSRetriever:
             if 'relation' in data:
                 triples.append((u, data['relation'],v))
         
-        texts = [f"{self._get_node_text(h)},{r},{self._get_node_text(t)}" for h, r, t in triples]
+        texts = [f"{self._get_node_text(h)},{r},{self._get_node_text(t)}" for h, r, t, *extra in triples]
         embeddings = self.model.encode(texts)
         
         dim = embeddings.shape[1]
@@ -1404,7 +1408,7 @@ class DualFAISSRetriever:
         if not hasattr(self, 'triple_index') or self.triple_index is None:
             logger.debug("triple_index is None or doesn't exist")
             # Fallback: return all triples with default scores
-            for h, r, t in triples:
+            for h, r, t, *extra in triples:
                 scored_triples.append((h, r, t, 0.5))  # Default score
             logger.debug(f"Using fallback method, returning {len(scored_triples)} triples")
             return scored_triples[:top_k]
@@ -1421,7 +1425,10 @@ class DualFAISSRetriever:
                     try:
                         # Get the triple from the index
                         indexed_triple = self.triple_map[str(idx)]
-                        h, r, t = indexed_triple  # This is (head, tail, relation) format
+                        if len(indexed_triple) >= 3:
+                            h, r, t = indexed_triple[:3]
+                        else:
+                            continue
                         # Check if this triple is in our input triples
                         if (h, r, t) in input_triples_set:
                             # Convert distance to similarity score (FAISS returns distances, we need similarities)
@@ -1439,7 +1446,7 @@ class DualFAISSRetriever:
                         logger.error(f"Warning: Error processing indexed triple {idx}: {str(e)}")
                         continue
         except Exception as e:
-            for h, r, t in triples:
+            for h, r, t, *extra in triples:
                 scored_triples.append((h, r, t, 0.5))  # Default score
         
         logger.debug(f"Found {len(scored_triples)} triples above threshold")
