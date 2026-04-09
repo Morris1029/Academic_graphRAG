@@ -5,7 +5,7 @@ defaults:
   dataset_conversion_input: "D:/STUDY MO/Research/Data/Q&A.xlsx"
   dataset_name: "AIGC-EDU"
   qa_mode: "agent"
-  answer_model: "kimi2.5"
+  answer_model: "minimax2.5"
   judge_model: "qwen"
   main_config_path: "config/base_config.yaml"
   results_dir: "eval/results/rag_eval"

@@ -24,17 +24,20 @@ def build_retriever(
     dataset_name: str,
     main_config_path: str,
     top_k: int,
+    override_json_path: Optional[str] = None,
+    override_cache_dir: Optional[str] = None,
 ) -> KTRetriever:
     config = reload_config(main_config_path)
     dataset_config = ensure_dataset_registered(config, dataset_name)
     retriever = KTRetriever(
         dataset_name,
-        json_path=dataset_config.graph_output,
+        json_path=override_json_path or dataset_config.graph_output,
         recall_paths=config.retrieval.recall_paths,
         schema_path=dataset_config.schema_path,
         top_k=top_k,
         mode=config.triggers.mode,
         config=config,
+        cache_dir=override_cache_dir or config.retrieval.cache_dir,
     )
     retriever.build_indices()
     return retriever

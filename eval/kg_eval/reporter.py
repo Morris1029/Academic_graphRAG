@@ -34,6 +34,9 @@ def build_markdown_report(summary: Dict[str, Any], audit_payload: Dict[str, Any]
     lines.append(f"- Sample file: {summary.get('sample_path', '')}")
     lines.append(f"- Approved samples: {summary.get('approved_sample_total', 0)}")
     lines.append(f"- Candidate model: {summary.get('candidate_model', '')}")
+    lines.append(f"- Evaluation Mode: {summary.get('eval_mode', 'standard')}")
+    if summary.get('eval_mode') == 'shadow_evaluation':
+        lines.append("  > [!NOTE]\n  > This run used **Shadow Evaluation**. Retrieval metrics are calculated by building a temporary index from the model's own extractions for these samples, ensuring metrics reflect model-specific quality.")
     lines.append("")
 
     graph_quality = audit_payload.get("graph_quality", {})
@@ -56,7 +59,7 @@ def build_markdown_report(summary: Dict[str, Any], audit_payload: Dict[str, Any]
     lines.append(f"- cross_doc_precision: {graph_quality.get('cross_doc_precision')}")
     lines.append("")
 
-    lines.append("## Retrieval Readiness")
+    lines.append("## Retrieval Readiness (Isolated)")
     retrieval = summary.get("retrieval_metrics", {})
     lines.append(f"- paper_node_hit@5: {retrieval.get('paper_node_hit@5', {})}")
     lines.append(f"- gold_triple_hit@10: {retrieval.get('gold_triple_hit@10', {})}")

@@ -238,48 +238,38 @@ def command_run(args: argparse.Namespace, runtime_config: Dict[str, Any]) -> Non
     if args.max_samples is not None:
         approved_records = approved_records[: max(0, args.max_samples)]
 
-    review_rows = _load_review_rows(args.review_file) if args.review_file else None
-    audit_bundle = _build_audit_bundle(bridge, review_rows=review_rows)
-
     if not approved_records:
         logger.warning("No approved gold samples found in %s", sample_path)
+        return
 
-    retriever = build_retriever(
-        dataset_name,
-        defaults.get("main_config_path", "config/base_config.yaml"),
-        top_k=max(int(defaults.get("gold_triple_top_k", 10)), int(defaults.get("paper_node_top_k", 5))),
-    ) if approved_records else None
-
-    # --- 并行化处理（LLM 抽取 + 检索评估）---
-    # max_workers 优先读 config.yaml 的 eval_max_workers，默认 5
+    # 1. Create Run Directory Early
+    run_dir = create_run_dir(defaults.get("results_dir", "eval/results/kg_eval"), dataset_name)
     max_workers = int(defaults.get("eval_max_workers", 5))
-    paper_top_k = int(defaults.get("paper_node_top_k", 5))
-    triple_top_k = int(defaults.get("gold_triple_top_k", 10))
     total = len(approved_records)
+    run_start = time.perf_counter()
 
-    per_sample_rows: List[Dict[str, Any]] = []
-    metric_blocks: List[Dict[str, Any]] = []
-    retrieval_blocks: List[Dict[str, Any]] = []
-    # 因多线程写共享列表，使用锁保证顺序一致性
+    # --- Phase 1: Parallel LLM Extraction ---
+    logger.info(
+        "Phase 1/3: Starting parallel extraction | total_samples=%d max_workers=%d candidate_model=%s",
+        total, max_workers, candidate_model,
+    )
+    
+    extracted_results: List[Dict[str, Any]] = []
     _lock = threading.Lock()
-    _completed = [0]  # list 封装计数器，避免 nonlocal 语法问题
+    _completed = [0]
 
-    def _process_one_record(record: Dict[str, Any]) -> Dict[str, Any]:
-        """处理单个样本：LLM 候选抽取 + 检索评估，返回可聚合的字典。"""
+    def _extract_one(record: Dict[str, Any]) -> Dict[str, Any]:
         candidate_result = service.extract(record, candidate_model, role_name="candidate")
         cand_ext_dict = candidate_result.extraction.to_dict()
         gold_extraction = record.get("kg_eval", {}).get("gold", {}).get("extraction", {})
         
-        # ==== Inject Structural Metadata from Gold into Candidate ====
+        # Inject Structural Metadata from Gold into Candidate to ensure base structure evaluation
         from eval.kg_eval.metrics import STRUCTURED_RELATIONS, STRUCTURED_ATTR_PREFIXES
-        
-        # 1. Merge structured triples
         for t in gold_extraction.get("triples", []):
             if len(t) == 3 and t[1] in STRUCTURED_RELATIONS:
                 if t not in cand_ext_dict.setdefault("triples", []):
                     cand_ext_dict["triples"].append(t)
-                    
-        # 2. Merge structured attributes
+        
         cand_attrs = cand_ext_dict.setdefault("attributes", {})
         for node, attrs in gold_extraction.get("attributes", {}).items():
             for a in attrs:
@@ -288,7 +278,6 @@ def command_run(args: argparse.Namespace, runtime_config: Dict[str, Any]) -> Non
                     if a not in node_attrs:
                         node_attrs.append(a)
                         
-        # 3. Restore entity types for the injected nodes
         gold_types = gold_extraction.get("entity_types", {})
         cand_types = cand_ext_dict.setdefault("entity_types", {})
         for t in cand_ext_dict.get("triples", []):
@@ -300,87 +289,134 @@ def command_run(args: argparse.Namespace, runtime_config: Dict[str, Any]) -> Non
         for node in cand_attrs:
             if node not in cand_types and node in gold_types:
                 cand_types[node] = gold_types[node]
-        # ==============================================================
 
-        comparison = compare_extractions(
-            bridge,
-            gold_extraction,
-            cand_ext_dict,
-        )
+        comparison = compare_extractions(bridge, gold_extraction, cand_ext_dict)
+        
+        return {
+            "record": record,
+            "cand_ext_dict": cand_ext_dict,
+            "candidate_result": candidate_result.to_dict(),
+            "comparison": comparison,
+        }
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = [executor.submit(_extract_one, r) for r in approved_records]
+        for future in as_completed(futures):
+            res = future.result()
+            with _lock:
+                _completed[0] += 1
+                extracted_results.append(res)
+                logger.info("[%d/%d] extracted sample_id=%s", _completed[0], total, res["record"]["id"])
+
+    # --- Phase 2: Shadow Graph Assembly ---
+    logger.info("Phase 2/3: Assembling shadow graph from extractions...")
+    shadow_relationships = []
+    
+    for res in extracted_results:
+        ext = res["cand_ext_dict"]
+        entity_types = ext.get("entity_types", {})
+        attributes = ext.get("attributes", {})
+        
+        for head, rel, tail in ext.get("triples", []):
+            h_type = entity_types.get(head, "entity")
+            t_type = entity_types.get(tail, "entity")
+            
+            shadow_relationships.append({
+                "start_node": {
+                    "label": h_type,
+                    "properties": {
+                        "name": head,
+                        "schema_type": h_type,
+                        "attributes": attributes.get(head, [])
+                    }
+                },
+                "relation": rel,
+                "end_node": {
+                    "label": t_type,
+                    "properties": {
+                        "name": tail,
+                        "schema_type": t_type,
+                        "attributes": attributes.get(tail, [])
+                    }
+                }
+            })
+
+    shadow_graph_path = run_dir / "candidate_graph.json"
+    shadow_cache_dir = run_dir / "faiss_cache"
+    write_json(shadow_graph_path, shadow_relationships)
+    logger.info("Shadow graph saved to %s", shadow_graph_path)
+
+    # --- Phase 3: Isolated Retrieval Evaluation ---
+    logger.info("Phase 3/3: Building shadow retriever and running retrieval pass...")
+    paper_top_k = int(defaults.get("paper_node_top_k", 5))
+    triple_top_k = int(defaults.get("gold_triple_top_k", 10))
+    
+    shadow_retriever = build_retriever(
+        dataset_name,
+        defaults.get("main_config_path", "config/base_config.yaml"),
+        top_k=max(paper_top_k, triple_top_k),
+        override_json_path=str(shadow_graph_path),
+        override_cache_dir=str(shadow_cache_dir)
+    )
+
+    per_sample_rows: List[Dict[str, Any]] = []
+    metric_blocks: List[Dict[str, Any]] = []
+    retrieval_blocks: List[Dict[str, Any]] = []
+    _completed[0] = 0
+
+    def _retrieve_one(res: Dict[str, Any]) -> Dict[str, Any]:
+        record = res["record"]
         retrieval_result = evaluate_sample_retrieval(
             record,
-            retriever,
+            shadow_retriever,
             bridge,
             paper_top_k=paper_top_k,
             triple_top_k=triple_top_k,
-        ) if retriever is not None else {}
+        )
         
-        # Update candidate result dict with the injected extraction
-        cand_res_dict = candidate_result.to_dict()
-        cand_res_dict["extraction"] = cand_ext_dict
+        cand_res_dict = res["candidate_result"]
+        cand_res_dict["extraction"] = res["cand_ext_dict"]
         
         return {
             "id": record["id"],
             "title": record.get("meta", {}).get("title", ""),
             "gold_status": record.get("kg_eval", {}).get("gold", {}).get("status", ""),
-            "gold_extraction": gold_extraction,
+            "gold_extraction": record.get("kg_eval", {}).get("gold", {}).get("extraction", {}),
             "candidate_result": cand_res_dict,
-            **comparison,
+            **res["comparison"],
             "retrieval_metrics": retrieval_result,
-            "_comparison": comparison,
+            "_comparison": res["comparison"],
             "_retrieval_result": retrieval_result,
         }
 
-    logger.info(
-        "Starting parallel evaluation | total_samples=%d max_workers=%d candidate_model=%s",
-        total, max_workers, candidate_model,
-    )
-    run_start = time.perf_counter()
-
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        future_to_record = {
-            executor.submit(_process_one_record, record): record
-            for record in approved_records
-        }
-        for future in as_completed(future_to_record):
-            record = future_to_record[future]
-            sample_id = str(record.get("id", "")).strip()
-            try:
-                result_row = future.result()
-            except Exception as exc:
-                logger.error("Sample %s failed: %s", sample_id, exc)
-                continue
-
+        futures = [executor.submit(_retrieve_one, res) for res in extracted_results]
+        for future in as_completed(futures):
+            row = future.result()
             with _lock:
                 _completed[0] += 1
-                metric_blocks.append(result_row.pop("_comparison"))
-                retrieval_blocks.append(result_row.pop("_retrieval_result"))
-                per_sample_rows.append(result_row)
-                logger.info(
-                    "[%d/%d] finished sample_id=%s elapsed=%s",
-                    _completed[0], total, sample_id,
-                    _format_duration(time.perf_counter() - run_start),
-                )
+                metric_blocks.append(row.pop("_comparison"))
+                retrieval_blocks.append(row.pop("_retrieval_result"))
+                per_sample_rows.append(row)
+                logger.info("[%d/%d] retrieved sample_id=%s", _completed[0], total, row["id"])
 
-    logger.info(
-        "Parallel evaluation done | total=%d completed=%d elapsed=%s",
-        total, _completed[0], _format_duration(time.perf_counter() - run_start),
-    )
+    # --- Final Aggregation & Reporting ---
+    run_elapsed = time.perf_counter() - run_start
+    logger.info("Evaluation done | total=%d elapsed=%s", total, _format_duration(run_elapsed))
 
     extraction_summary = aggregate_metric_blocks(metric_blocks)
     retrieval_summary = aggregate_retrieval_results(retrieval_blocks)
 
+    review_rows = _load_review_rows(args.review_file) if args.review_file else None
+    audit_bundle = _build_audit_bundle(bridge, review_rows=review_rows)
+    
     cross_doc_template = build_cross_doc_review_template(
         _dataset_paths(bridge)["graph_path"],
         sample_size=int(defaults.get("cross_doc_review_sample_size", 50)),
         seed=int(defaults.get("cross_doc_review_seed", 42)),
     )
     cross_doc_summary = score_cross_doc_reviews(review_rows or []) if review_rows else {
-        "reviewed": 0,
-        "accepted": 0,
-        "rejected": 0,
-        "precision": None,
-        "pending": len(cross_doc_template),
+        "reviewed": 0, "accepted": 0, "rejected": 0, "precision": None, "pending": len(cross_doc_template),
     }
     audit_bundle["graph_quality"]["cross_doc_precision"] = cross_doc_summary.get("precision")
 
@@ -388,14 +424,14 @@ def command_run(args: argparse.Namespace, runtime_config: Dict[str, Any]) -> Non
         "dataset_name": dataset_name,
         "sample_path": sample_path,
         "status_counts": status_counts,
-        "approved_sample_total": len(approved_records),
+        "approved_sample_total": total,
         "candidate_model": candidate_model,
         "extraction_metrics": extraction_summary,
         "retrieval_metrics": retrieval_summary,
         "cross_doc_review": cross_doc_summary,
+        "eval_mode": "shadow_evaluation"
     }
 
-    run_dir = create_run_dir(defaults.get("results_dir", "eval/results/kg_eval"), dataset_name)
     write_json(run_dir / "summary.json", summary)
     write_json(run_dir / "audit.json", audit_bundle)
     write_jsonl(run_dir / "per_sample.jsonl", per_sample_rows)
