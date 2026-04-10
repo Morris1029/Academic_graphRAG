@@ -203,12 +203,14 @@ def _load_review_rows(review_file: str) -> List[Dict[str, Any]]:
 
 def _build_audit_bundle(
     bridge: ConstructionBridge,
+    graph_path: Optional[str] = None,
     review_rows: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     dataset_paths = _dataset_paths(bridge)
+    target_graph_path = graph_path or dataset_paths["graph_path"]
     cross_doc_summary = score_cross_doc_reviews(review_rows or []) if review_rows else {}
     graph_quality = evaluate_graph_structure(
-        dataset_paths["graph_path"],
+        target_graph_path,
         bridge,
         cross_doc_precision=cross_doc_summary.get("precision") if cross_doc_summary else None,
     )
@@ -408,7 +410,11 @@ def command_run(args: argparse.Namespace, runtime_config: Dict[str, Any]) -> Non
     retrieval_summary = aggregate_retrieval_results(retrieval_blocks)
 
     review_rows = _load_review_rows(args.review_file) if args.review_file else None
-    audit_bundle = _build_audit_bundle(bridge, review_rows=review_rows)
+    audit_bundle = _build_audit_bundle(
+        bridge,
+        graph_path=str(shadow_graph_path),
+        review_rows=review_rows
+    )
     
     cross_doc_template = build_cross_doc_review_template(
         _dataset_paths(bridge)["graph_path"],

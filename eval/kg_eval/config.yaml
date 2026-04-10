@@ -10,7 +10,7 @@ defaults:
   paper_node_top_k: 5
   gold_triple_top_k: 10
   gold_model: "qwen"
-  candidate_model: "gemini"
+  candidate_model: "deepseekv3.2"
   eval_max_workers: 18  # 并行评估线程数，根据 API 并发限制调整
 
 models:
