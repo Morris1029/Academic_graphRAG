@@ -270,7 +270,12 @@ class DualFAISSRetriever:
         Returns scored triples that have relevance scores above threshold.
         """
         if not self.triple_index:
-            raise ValueError("Please build triple index first!")
+            has_triples = any(True for _, _, d in self.graph.edges(data=True) if 'relation' in d)
+            if has_triples:
+                logger.warning("Triple index missing but graph contains triples! please run build_indices() first.")
+            else:
+                logger.info("Graph contains no triples. Skipping triple-based retrieval.")
+            return []
         
         # Ensure query_embed is on the correct device and apply transformations
         if isinstance(query_embed, torch.Tensor):
@@ -304,7 +309,12 @@ class DualFAISSRetriever:
         Returns only nodes that have a valid, cached embedding.
         """
         if not self.comm_index:
-            raise ValueError("Please build community index first!")
+            has_communities = any(True for _, d in self.graph.nodes(data=True) if d.get('label') == 'community')
+            if has_communities:
+                logger.warning("Community index missing but graph contains community nodes! Please run build_indices() first.")
+            else:
+                logger.info("Graph contains no community nodes (normal for shadow graphs). Skipping community-based retrieval.")
+            return []
         
         # Ensure query_embed is on the correct device before transformation
         if isinstance(query_embed, torch.Tensor):
@@ -1049,6 +1059,7 @@ class DualFAISSRetriever:
                     valid_communities.append(comm)
         
         if not valid_communities:
+            logger.info("No community nodes with name/description found in graph. Skipping community index build.")
             return
             
         embeddings = self.model.encode(texts)
