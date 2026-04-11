@@ -104,36 +104,10 @@ def evaluate_graph_structure(
     isolated_nodes = [node_id for node_id in primary_nodes if graph.degree(node_id) == 0]
     isolated_node_rate = len(isolated_nodes) / len(primary_nodes) if primary_nodes else 0.0
 
-    paper_nodes = []
-    paper_nodes_with_author_edge = 0
-    for node_id in primary_nodes:
-        node_props = graph.nodes[node_id].get("properties", {}) or {}
-        if not bridge.is_paper_type(node_props.get("schema_type", "")):
-            continue
-        paper_nodes.append(node_id)
-        has_author_edge = False
-
-        for source, _, edge_data in graph.in_edges(node_id, data=True):
-            relation = bridge.normalize_relation_name(edge_data.get("relation", ""))
-            source_type = bridge.normalize_entity_type(graph.nodes[source].get("properties", {}).get("schema_type", ""))
-            if relation == "撰写" and bridge.is_author_type(source_type):
-                has_author_edge = True
-                break
-
-        if not has_author_edge:
-            for _, target, edge_data in graph.out_edges(node_id, data=True):
-                relation = bridge.normalize_relation_name(edge_data.get("relation", ""))
-                target_type = bridge.normalize_entity_type(graph.nodes[target].get("properties", {}).get("schema_type", ""))
-                if relation == "撰写" and bridge.is_author_type(target_type):
-                    has_author_edge = True
-                    break
-
-        if has_author_edge:
-            paper_nodes_with_author_edge += 1
-
-    paper_author_edge_coverage = (
-        paper_nodes_with_author_edge / len(paper_nodes) if paper_nodes else 0.0
-    )
+    paper_nodes = [
+        node_id for node_id in primary_nodes
+        if bridge.is_paper_type(graph.nodes[node_id].get("properties", {}).get("schema_type", ""))
+    ]
 
     cross_doc_edge_total = sum(
         1
@@ -156,7 +130,6 @@ def evaluate_graph_structure(
         ],
         "isolated_node_rate": isolated_node_rate,
         "paper_node_total": len(paper_nodes),
-        "paper_author_edge_coverage": paper_author_edge_coverage,
         "cross_doc_edge_total": cross_doc_edge_total,
         "cross_doc_precision": cross_doc_precision,
     }

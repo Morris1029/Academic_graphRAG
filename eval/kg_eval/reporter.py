@@ -57,7 +57,6 @@ def build_markdown_report(summary: Dict[str, Any], audit_payload: Dict[str, Any]
     lines.append(f"- paper_node_total (论文总数): {graph_quality.get('paper_node_total')}")
     lines.append(f"- duplicate_node_rate (重复节点率): {graph_quality.get('duplicate_node_rate')}")
     lines.append(f"- isolated_node_rate (孤立节点率): {graph_quality.get('isolated_node_rate')}")
-    lines.append(f"- paper_author_edge_coverage (作者边覆盖率): {graph_quality.get('paper_author_edge_coverage')}")
     lines.append(f"- cross_doc_edge_total (跨文档边总数): {graph_quality.get('cross_doc_edge_total')}")
     lines.append(f"- cross_doc_precision (跨文档边准确率): {graph_quality.get('cross_doc_precision')}")
     lines.append("")

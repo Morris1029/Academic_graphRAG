@@ -11,12 +11,23 @@ from .data_models import RetrievalMetricSummary
 
 
 RELATION_QUERY_TEMPLATES = {
-    "撰写": lambda paper: f"{paper} 的作者是谁",
-    "发表于": lambda paper: f"{paper} 发表于什么期刊",
-    "应用于": lambda paper: f"{paper} 应用于什么场景",
-    "聚焦": lambda paper: f"{paper} 聚焦什么研究主题",
-    "采用": lambda paper: f"{paper} 采用了什么研究方法",
-    "提出": lambda paper: f"{paper} 提出了什么",
+    "撰写": lambda paper, h, t: f"{paper} 的作者是谁",
+    "作者": lambda paper, h, t: f"{paper} 的作者是谁",
+    "发表于": lambda paper, h, t: f"{paper} 发表于什么期刊或会议",
+    "发表在": lambda paper, h, t: f"{paper} 发表于什么期刊或会议",
+    "应用于": lambda paper, h, t: f"在作品《{paper}》中，{h} 应用于什么场景",
+    "应用": lambda paper, h, t: f"在作品《{paper}》中，{h} 应用于什么场景",
+    "聚焦": lambda paper, h, t: f"{paper} 聚焦什么研究主题",
+    "关注": lambda paper, h, t: f"{paper} 关注什么研究主题",
+    "采用": lambda paper, h, t: f"{paper} 采用了什么研究方法或技术",
+    "提出": lambda paper, h, t: f"{paper} 提出了什么概念或框架",
+    "推出的": lambda paper, h, t: f"{paper} 提出了什么概念或框架",
+    "隶属于": lambda paper, h, t: f"在《{paper}》中，{h} 隶属于哪个机构",
+    "隶属": lambda paper, h, t: f"在《{paper}》中，{h} 隶属于哪个机构",
+    "位于": lambda paper, h, t: f"在《{paper}》中，{h} 位于哪里",
+    "包含": lambda paper, h, t: f"在《{paper}》中，{h} 包含了哪些内容",
+    "关键词": lambda paper, h, t: f"{paper} 的核心关键词有哪些",
+    "核心词": lambda paper, h, t: f"{paper} 的核心关键词有哪些",
 }
 
 
@@ -61,10 +72,13 @@ def _node_schema_type(retriever: Any, node_id: str) -> str:
 
 def _parse_entity_with_type(raw: str) -> Tuple[str, str]:
     text = str(raw or "").strip()
-    match = re.match(r"^(.*?)(?:\s*\[schema_type:\s*([^\]]+)\])?$", text)
+    # Support complex property strings like [schema_type: 作者, label: author]
+    # We only want the first part of schema_type before any comma
+    match = re.match(r"^(.*?)(?:\s*\[schema_type:\s*([^,\]\s]+).*?\])?$", text)
     if not match:
         return text, ""
-    return match.group(1).strip(), str(match.group(2) or "").strip()
+    name, stype = match.group(1).strip(), str(match.group(2) or "").strip()
+    return name, stype
 
 
 def _parse_formatted_triple(triple_text: str, bridge: ConstructionBridge) -> Optional[Tuple[str, str, str]]:
@@ -77,7 +91,8 @@ def _parse_formatted_triple(triple_text: str, bridge: ConstructionBridge) -> Opt
     if text.startswith("(") and text.endswith(")"):
         text = text[1:-1]
 
-    parts = [part.strip() for part in text.split(",", 2)]
+    # Split by comma ONLY if it's not inside brackets (e.g. [schema_type: ..., ...])
+    parts = re.split(r",\s*(?![^\[]*\])", text)
     if len(parts) != 3:
         return None
 
@@ -119,15 +134,17 @@ def build_gold_triple_query(
     if not isinstance(triple, list) or len(triple) < 3:
         return None, "invalid_triple"
 
-    paper_name = _paper_name_for_triple(sample, triple, entity_types, bridge)
-    if not paper_name:
-        return None, "not_paper_centered"
+    paper_title = str(sample.get("meta", {}).get("title", "")).strip()
+    head, relation_raw, tail = triple
+    relation = bridge.normalize_relation_name(relation_raw)
 
-    relation = bridge.normalize_relation_name(triple[1])
     template = RELATION_QUERY_TEMPLATES.get(relation)
     if template is None:
         return None, f"missing_template:{relation}"
-    return template(paper_name), None
+
+    # We use the paper title as context even if the triple isn't explicitly centered on it,
+    # because the user's goal is to test retrieval readiness for that specific paper's content.
+    return template(paper_title, head, tail), None
 
 
 def evaluate_sample_retrieval(
