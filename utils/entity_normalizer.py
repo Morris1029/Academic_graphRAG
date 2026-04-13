@@ -122,7 +122,10 @@ class EntityNormalizer:
         return normalize_text(mapped, strip_outer_brackets=False)
 
     def normalize_name_key(self, value: Any) -> str:
-        return normalize_text(value, strip_outer_brackets=False).casefold()
+        text = normalize_text(value, strip_outer_brackets=False).casefold()
+        # Remove all punctuation and extra whitespace for the key
+        text = re.sub(r"[^\w\s\u4e00-\u9fa5]", "", text)
+        return re.sub(r"\s+", "", text).strip()
 
     def resolve(self, entity_name: Any, entity_type: Any = "") -> Tuple[str, str]:
         raw_name = normalize_text(entity_name, strip_outer_brackets=False)

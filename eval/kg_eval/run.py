@@ -292,7 +292,12 @@ def command_run(args: argparse.Namespace, runtime_config: Dict[str, Any]) -> Non
             if node not in cand_types and node in gold_types:
                 cand_types[node] = gold_types[node]
 
-        comparison = compare_extractions(bridge, gold_extraction, cand_ext_dict)
+        comparison = compare_extractions(
+            bridge, 
+            gold_extraction, 
+            cand_ext_dict, 
+            gold_title=record.get("meta", {}).get("title", "")
+        )
         
         return {
             "record": record,
@@ -315,11 +320,17 @@ def command_run(args: argparse.Namespace, runtime_config: Dict[str, Any]) -> Non
     shadow_relationships = []
     
     for res in extracted_results:
-        ext = res["cand_ext_dict"]
-        entity_types = ext.get("entity_types", {})
-        attributes = ext.get("attributes", {})
+        normalized = res["comparison"]["normalized_candidate"]
         
-        for head, rel, tail in ext.get("triples", []):
+        # entities is a set of (name, type)
+        entity_types = {name: etype for name, etype in normalized["entities"]}
+        
+        # attributes is a set of (name, value). Group by name.
+        attributes_map = {}
+        for name, value in normalized["attributes"]:
+            attributes_map.setdefault(name, []).append(value)
+        
+        for head, rel, tail in normalized["triples"]:
             h_type = entity_types.get(head, "entity")
             t_type = entity_types.get(tail, "entity")
             
@@ -329,7 +340,7 @@ def command_run(args: argparse.Namespace, runtime_config: Dict[str, Any]) -> Non
                     "properties": {
                         "name": head,
                         "schema_type": h_type,
-                        "attributes": attributes.get(head, [])
+                        "attributes": attributes_map.get(head, [])
                     }
                 },
                 "relation": rel,
@@ -338,7 +349,7 @@ def command_run(args: argparse.Namespace, runtime_config: Dict[str, Any]) -> Non
                     "properties": {
                         "name": tail,
                         "schema_type": t_type,
-                        "attributes": attributes.get(tail, [])
+                        "attributes": attributes_map.get(tail, [])
                     }
                 }
             })

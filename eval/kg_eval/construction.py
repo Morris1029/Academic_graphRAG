@@ -141,7 +141,7 @@ class ConstructionBridge:
     def is_author_type(self, value: Any) -> bool:
         return self.normalize_entity_type(value).casefold() in {"作者", "author"}
 
-    def normalize_extraction(self, extraction: Any) -> Dict[str, Any]:
+    def normalize_extraction(self, extraction: Any, gold_title: Optional[str] = None) -> Dict[str, Any]:
         clean_extraction = sanitize_extraction_payload(extraction).to_dict()
         entity_type_map: Dict[str, str] = {}
         raw_entity_types: Dict[str, str] = {}
@@ -149,7 +149,13 @@ class ConstructionBridge:
         for entity_name, entity_type in clean_extraction["entity_types"].items():
             normalized_type = self.normalize_entity_type(entity_type)
             raw_entity_types[str(entity_name or "").strip()] = normalized_type
-            normalized_name = self.normalize_entity_name(entity_name, normalized_type)
+            
+            # 强制对齐论文节点到 Gold Title
+            current_entity_name = entity_name
+            if gold_title and normalized_type == "论文":
+                current_entity_name = gold_title
+
+            normalized_name = self.normalize_entity_name(current_entity_name, normalized_type)
             if not normalized_name:
                 continue
             entity_type_map[normalized_name] = normalized_type
@@ -157,7 +163,13 @@ class ConstructionBridge:
         for entity_name in clean_extraction["attributes"].keys():
             raw_name = str(entity_name or "").strip()
             normalized_type = raw_entity_types.get(raw_name, "")
-            normalized_name = self.normalize_entity_name(entity_name, normalized_type)
+
+            # 属性对齐逻辑
+            current_entity_name = entity_name
+            if gold_title and normalized_type == "论文":
+                current_entity_name = gold_title
+
+            normalized_name = self.normalize_entity_name(current_entity_name, normalized_type)
             if normalized_name and normalized_name not in entity_type_map:
                 entity_type_map[normalized_name] = normalized_type
 
@@ -165,7 +177,13 @@ class ConstructionBridge:
             for entity_name in (head, tail):
                 raw_name = str(entity_name or "").strip()
                 normalized_type = raw_entity_types.get(raw_name, "")
-                normalized_name = self.normalize_entity_name(entity_name, normalized_type)
+                
+                # 三元组节点对齐逻辑
+                current_entity_name = entity_name
+                if gold_title and normalized_type == "论文":
+                    current_entity_name = gold_title
+
+                normalized_name = self.normalize_entity_name(current_entity_name, normalized_type)
                 if normalized_name and normalized_name not in entity_type_map:
                     entity_type_map[normalized_name] = normalized_type
 
@@ -177,17 +195,33 @@ class ConstructionBridge:
 
         triple_set = set()
         for head, relation, tail in clean_extraction["triples"]:
-            normalized_head = self.normalize_entity_name(head, raw_entity_types.get(str(head).strip(), ""))
+            head_type = raw_entity_types.get(str(head).strip(), "")
+            tail_type = raw_entity_types.get(str(tail).strip(), "")
+
+            norm_head_name = head
+            if gold_title and head_type == "论文":
+                norm_head_name = gold_title
+                
+            norm_tail_name = tail
+            if gold_title and tail_type == "论文":
+                norm_tail_name = gold_title
+
+            normalized_head = self.normalize_entity_name(norm_head_name, head_type)
             normalized_relation = self.normalize_relation_name(relation)
-            normalized_tail = self.normalize_entity_name(tail, raw_entity_types.get(str(tail).strip(), ""))
+            normalized_tail = self.normalize_entity_name(norm_tail_name, tail_type)
             if normalized_head and normalized_relation and normalized_tail:
                 triple_set.add((normalized_head, normalized_relation, normalized_tail))
 
         attribute_pairs = set()
         for entity_name, values in clean_extraction["attributes"].items():
+            ent_type = raw_entity_types.get(str(entity_name).strip(), "")
+            norm_ent_name = entity_name
+            if gold_title and ent_type == "论文":
+                norm_ent_name = gold_title
+
             normalized_entity = self.normalize_entity_name(
-                entity_name,
-                raw_entity_types.get(str(entity_name).strip(), ""),
+                norm_ent_name,
+                ent_type,
             )
             if not normalized_entity:
                 continue

@@ -32,9 +32,18 @@ def compare_extractions(
     bridge: ConstructionBridge,
     gold_extraction: Any,
     candidate_extraction: Any,
+    gold_title: Optional[str] = None,
 ) -> Dict[str, Any]:
-    normalized_gold = bridge.normalize_extraction(gold_extraction)
-    normalized_candidate = bridge.normalize_extraction(candidate_extraction)
+    # 如果没有显式提供 gold_title，尝试从 gold_extraction 中提取
+    if not gold_title and isinstance(gold_extraction, dict):
+        etypes = gold_extraction.get("entity_types", {})
+        for name, etype in etypes.items():
+            if bridge.normalize_entity_type(etype) == "论文":
+                gold_title = name
+                break
+
+    normalized_gold = bridge.normalize_extraction(gold_extraction, gold_title=gold_title)
+    normalized_candidate = bridge.normalize_extraction(candidate_extraction, gold_title=gold_title)
 
     gold_struct_triples = {t for t in normalized_gold["triples"] if t[1] in STRUCTURED_RELATIONS}
     cand_struct_triples = {t for t in normalized_candidate["triples"] if t[1] in STRUCTURED_RELATIONS}

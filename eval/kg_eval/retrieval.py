@@ -173,14 +173,19 @@ def evaluate_sample_retrieval(
     hit_count = 0
     skipped = 0
 
+    def _norm_ent(name, etype):
+        if bridge.is_paper_type(etype):
+            return bridge.normalize_entity_name(title, "论文")
+        return bridge.normalize_entity_name(name, etype)
+
     for triple in extraction.get("triples", []) or []:
         query, skip_reason = build_gold_triple_query(sample, triple, entity_types, bridge)
         normalized_gold_triple = None
         if isinstance(triple, list) and len(triple) >= 3:
             normalized_gold_triple = (
-                bridge.normalize_entity_name(triple[0], entity_types.get(triple[0], "")),
+                _norm_ent(triple[0], entity_types.get(triple[0], "")),
                 bridge.normalize_relation_name(triple[1]),
-                bridge.normalize_entity_name(triple[2], entity_types.get(triple[2], "")),
+                _norm_ent(triple[2], entity_types.get(triple[2], "")),
             )
 
         if not query:
