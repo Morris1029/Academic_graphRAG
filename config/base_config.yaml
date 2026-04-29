@@ -269,7 +269,7 @@ retrieval:
   agent:
     enable_ircot: false
     enable_parallel_subquestions: false
-    max_steps: 1
+    max_steps: 3
   cache_dir: retriever/faiss_cache_new
   enable_caching: true
   enable_diagnostics: true

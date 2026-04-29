@@ -7,6 +7,8 @@ Integrates real GraphRAG functionality with a simple interface
 import os
 import re
 import sys
+from dotenv import load_dotenv
+load_dotenv()
 import json
 import asyncio
 import glob
