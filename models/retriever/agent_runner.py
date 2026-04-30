@@ -338,6 +338,11 @@ def run_agent_retrieval(graphq, kt_retriever, question: str, schema_path: str, m
     all_chunk_ids = initial_result['all_chunk_ids_set']
     all_chunk_contents = initial_result['all_chunk_contents_dict']
     
+    # Variables to hold the increment for the current step
+    current_new_triples = deduplicate_triples(list(all_triples))
+    current_new_chunk_ids = list(dict.fromkeys(all_chunk_ids))
+    current_new_chunk_contents = merge_chunk_contents(current_new_chunk_ids, all_chunk_contents)
+    
     reasoning_steps = list(initial_result['sub_question_results'])
     
     # Use full initial answer without truncation in thoughts
@@ -354,12 +359,9 @@ def run_agent_retrieval(graphq, kt_retriever, question: str, schema_path: str, m
     for step in range(1, max_steps + 1):
         logger.info(f"IRCoT Step {step}/{max_steps}")
         
-        dedup_triples = deduplicate_triples(list(all_triples))
-        dedup_chunk_ids = list(dict.fromkeys(all_chunk_ids))
-        dedup_chunk_contents = merge_chunk_contents(dedup_chunk_ids, all_chunk_contents)
-        
-        paper_list, chunks_context = cluster_chunks_by_paper(dedup_chunk_contents[:10])
-        context = "=== Triples ===\n" + "\n".join(dedup_triples[:20]) # Limit context length to avoid token explosion
+        # Build context using ONLY the increment from the previous retrieval step
+        paper_list, chunks_context = cluster_chunks_by_paper(current_new_chunk_contents[:10])
+        context = "=== Triples ===\n" + "\n".join(current_new_triples[:20]) # Limit context length to avoid token explosion
         context += "\n=== Chunks ===\n" + chunks_context
         
         ircot_prompt = f"""
@@ -405,11 +407,11 @@ Your reasoning:
             "type": "ircot_step",
             "step": step,
             "question": current_query,
-            "triples": dedup_triples[:10],
-            "triples_count": len(dedup_triples),
-            "chunks_count": len(dedup_chunk_ids),
+            "triples": current_new_triples[:10],
+            "triples_count": len(current_new_triples),
+            "chunks_count": len(current_new_chunk_ids),
             "processing_time": 0,
-            "chunk_contents": dedup_chunk_contents[:3],
+            "chunk_contents": current_new_chunk_contents[:3],
             "thought": reasoning[:500] # Slightly truncated for frontend display only, not the actual LLM chain
         })
         
@@ -444,13 +446,22 @@ Your reasoning:
             
             if isinstance(new_chunk_contents, list):
                 new_chunk_contents_dict = {}
+                new_chunk_contents_list = []
                 for i, chunk_id in enumerate(new_chunk_ids):
                     if i < len(new_chunk_contents):
-                        new_chunk_contents_dict[str(chunk_id)] = new_chunk_contents[i]
+                        content = new_chunk_contents[i]
                     else:
-                        new_chunk_contents_dict[str(chunk_id)] = f"[Missing content for chunk {chunk_id}]"
+                        content = f"[Missing content for chunk {chunk_id}]"
+                    new_chunk_contents_dict[str(chunk_id)] = content
+                    new_chunk_contents_list.append(content)
             else:
                 new_chunk_contents_dict = {str(k): v for k, v in new_chunk_contents.items()}
+                new_chunk_contents_list = [new_chunk_contents_dict.get(str(cid), "") for cid in new_chunk_ids]
+            
+            # Extract increments for the next iteration step
+            current_new_triples = deduplicate_triples(new_triples)
+            current_new_chunk_ids = list(dict.fromkeys([str(cid) for cid in new_chunk_ids]))
+            current_new_chunk_contents = new_chunk_contents_list
             
             all_triples.update(new_triples)
             all_chunk_ids.update(str(cid) for cid in new_chunk_ids)
@@ -460,11 +471,24 @@ Your reasoning:
             break
     
     # Synthesis Step
-    # If the step broke out without finding the answer, or even if it did, 
-    # synthesis with ALL collected context ensures a complete and consistent final answer.
-    final_triples = deduplicate_triples(list(all_triples))[:30] # Allow slightly more context
+    # Perform a global rerank on the accumulated knowledge
+    final_triples = deduplicate_triples(list(all_triples))
+    if len(final_triples) > 30:
+        final_triples = hybrid_rerank_triples(final_triples, question, 30)
+    else:
+        # Just to ensure they are properly ordered by the initial question if less than 30
+        final_triples = hybrid_rerank_triples(final_triples, question, len(final_triples))
+
     final_chunk_ids = list(dict.fromkeys(all_chunk_ids))
-    final_chunk_contents = merge_chunk_contents(final_chunk_ids, all_chunk_contents)[:15]
+    final_chunk_contents = merge_chunk_contents(final_chunk_ids, all_chunk_contents)
+    if len(final_chunk_contents) > 15:
+        final_chunk_contents = rerank_chunks_by_keywords(final_chunk_contents, question, 15)
+    else:
+        final_chunk_contents = rerank_chunks_by_keywords(final_chunk_contents, question, len(final_chunk_contents))
+
+    # To ensure consistent slicing for final chunks
+    final_triples = final_triples[:30]
+    final_chunk_contents = final_chunk_contents[:15]
 
     if callback:
         callback("retrieval_progress", progress=95, message="Synthesizing final answer...")
@@ -503,3 +527,4 @@ Your reasoning:
         'thoughts': thoughts,
         'retrieved_papers': paper_list
     }
+
